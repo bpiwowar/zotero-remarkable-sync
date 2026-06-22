@@ -33,8 +33,8 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "rmapi-js": "^10.0.1",
-    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+    "rmapi-js": "^10.1.1",
+    "zotero-plugin-toolkit": "^5.1.4"
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
@@ -44,9 +44,9 @@
     "chai": "^6.2.1",
     "eslint": "^9.39.2",
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.7",
+    "lint-staged": "^17.0.8",
     "mocha": "^11.7.5",
-    "prettier": "^3.7.4",
+    "prettier": "^3.8.4",
     "typescript": "^5.9.3",
     "zotero-plugin-scaffold": "^0.8.2",
     "zotero-types": "^4.1.2"
