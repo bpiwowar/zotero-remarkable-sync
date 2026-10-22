@@ -12,7 +12,7 @@
 > modifies annotations already on the device. Turn it off in the plugin
 > preferences to push Zotero annotations back to the device (the riskier path).
 
-A [Zotero 7](https://www.zotero.org/) plugin (supports up to Zotero 9) that keeps your
+A [Zotero 7](https://www.zotero.org/) plugin (supports up to Zotero 10) that keeps your
 PDFs **and annotations** in sync with a [reMarkable](https://remarkable.com/) tablet.
 
 - **Tag-driven** — items tagged `@remarkable` (configurable) are pushed to the device.
