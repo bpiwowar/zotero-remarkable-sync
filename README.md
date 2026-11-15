@@ -67,10 +67,14 @@ device token is stored in Zotero preferences.
   device). Nothing changes until a final confirmation. Sub-folders are left
   alone.
 
-Annotations sync **reMarkable → Zotero** only; the Zotero side is never modified
-destructively, so you can keep annotating on the device. Text highlights become
-Zotero highlights, freehand highlighter becomes translucent highlights, and pen
-strokes become ink.
+Text highlights become Zotero highlights, freehand highlighter becomes
+translucent highlights, pen strokes become ink, and page tags become a tagged
+note on the page. With safe mode off, highlights and ink made in Zotero are
+pushed to the device, and page tags removed in Zotero are removed there. Your
+own Zotero annotations, comments and tags are never overwritten by a pull.
+
+See [docs/sync.md](docs/sync.md) for how sync works in detail: phases, modes,
+conflict handling and known limits.
 
 ## Milestones
 
