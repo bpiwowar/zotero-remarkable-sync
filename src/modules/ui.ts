@@ -36,6 +36,7 @@ const ELEMENT_IDS = [
   `${ID}-remove`,
   `${ID}-ovr-zotero`,
   `${ID}-ovr-remarkable`,
+  `${ID}-pane-popup`,
 ];
 // Property key under which we stash the popupshowing listener on the item menu
 // element, so a stale one can be removed even after a hot-reload.
@@ -315,6 +316,44 @@ export async function runOverwriteFromRemarkable(
     pw.startCloseTimer(5000);
   } catch (e) {
     log("runOverwriteFromRemarkable error:", e);
+    pw.changeLine({
+      type: "fail",
+      progress: 100,
+      text: getString("sync-error", { args: { error: errMsg(e) } }),
+    });
+    pw.startCloseTimer(8000);
+  }
+}
+
+/**
+ * Re-send the selected items' Zotero annotations to the device, rewriting
+ * every page that holds one even if nothing changed. The PDF is not
+ * re-uploaded, so the tablet's own annotations stay.
+ */
+export async function runForcePush(items: Zotero.Item[]): Promise<void> {
+  if (notConnected() || blockedBySafeMode()) return;
+  const atts = engine.pdfAttachmentsOf(items);
+  if (atts.length === 0) {
+    new ztoolkit.ProgressWindow(config.addonName)
+      .createLine({ text: getString("nothing-selected"), type: "fail" })
+      .show(3000);
+    return;
+  }
+  const pw = newProgress();
+  try {
+    const summary = await pushAnnotations(
+      (text, pct) => pw.changeLine({ progress: pct, text }),
+      { onlyKeys: new Set(atts.map((a) => a.key)), force: true },
+    );
+    pw.changeLine({
+      progress: 100,
+      text: getString("force-push-done", {
+        args: { pushed: summary.pushed, skipped: summary.skipped },
+      }),
+    });
+    pw.startCloseTimer(5000);
+  } catch (e) {
+    log("runForcePush error:", e);
     pw.changeLine({
       type: "fail",
       progress: 100,
@@ -780,10 +819,55 @@ function renderSection(
   });
   body.appendChild(toggle);
 
+  // Split button: the main part syncs this item, the arrow offers forced
+  // one-way runs (handy to try a change on a single paper).
+  const group = doc.createElement("span");
+  group.style.display = "inline-flex";
+  group.style.marginInlineStart = "6px";
   const sync = doc.createElement("button");
-  sync.style.marginInlineStart = "6px";
   sync.textContent = getString("sync-now");
   sync.disabled = !synced;
+  sync.style.borderStartEndRadius = "0";
+  sync.style.borderEndEndRadius = "0";
   sync.addEventListener("click", () => void runSyncNow([item]));
-  body.appendChild(sync);
+  const more = doc.createElement("button");
+  more.textContent = "▾";
+  more.title = getString("sync-more-tooltip");
+  more.disabled = !synced;
+  more.style.borderStartStartRadius = "0";
+  more.style.borderEndStartRadius = "0";
+  more.style.marginInlineStart = "-1px";
+  more.addEventListener("click", () => openSyncMenu(doc, more, item));
+  group.append(sync, more);
+  body.appendChild(group);
+}
+
+/** Drop-down of forced sync runs for one item, anchored to `anchor`. */
+function openSyncMenu(doc: Document, anchor: Element, item: Zotero.Item): void {
+  const popupId = `${ID}-pane-popup`;
+  doc.querySelectorAll(`#${popupId}`).forEach((el: Element) => el.remove());
+  const popup = (doc as any).createXULElement("menupopup") as any;
+  popup.id = popupId;
+  const win = doc.defaultView!;
+  const entries: [string, () => void][] = [
+    [getString("sync-now"), () => void runSyncNow([item])],
+    [
+      getString("sync-force-pull"),
+      () => void runOverwriteFromRemarkable([item]),
+    ],
+    [getString("sync-force-push"), () => void runForcePush([item])],
+  ];
+  for (const [label, run] of entries) {
+    const mi = (doc as any).createXULElement("menuitem") as Element;
+    mi.setAttribute("label", label);
+    mi.addEventListener("command", run);
+    popup.appendChild(mi);
+  }
+  popup.addEventListener("popuphidden", (e: Event) => {
+    if (e.target === popup) win.setTimeout(() => popup.remove(), 0);
+  });
+  (doc.getElementById("mainPopupSet") ?? doc.documentElement)!.appendChild(
+    popup,
+  );
+  popup.openPopup(anchor, "after_end");
 }

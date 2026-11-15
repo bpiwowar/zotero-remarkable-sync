@@ -230,10 +230,14 @@ async function loadTemplate(
   return null;
 }
 
-/** Push Zotero-origin annotations for every synced attachment. */
+/**
+ * Push Zotero-origin annotations for every synced attachment. With `force`,
+ * pages are rewritten even when nothing changed since the last push, so every
+ * pushed annotation is regenerated (e.g. after a geometry fix).
+ */
 export async function pushAnnotations(
   progress?: ProgressFn,
-  opts: { onlyKeys?: Set<string> } = {},
+  opts: { onlyKeys?: Set<string>; force?: boolean } = {},
 ): Promise<PushSummary> {
   ensureNetworkGlobals();
   const summary: PushSummary = { pushed: 0, skipped: 0, failed: 0, errors: [] };
@@ -399,7 +403,7 @@ export async function pushAnnotations(
             return !was || pushFingerprint(a) === was;
           });
         const deletedHere = unpulled.byPage.get(pageUuid) ?? [];
-        if (sameSet && deletedHere.length === 0) continue;
+        if (!opts.force && sameSet && deletedHere.length === 0) continue;
 
         const found = findRef(pageUuid);
         const size = pageSizeAt(sizes, found ? found.pdfIdx : 0);
