@@ -11,7 +11,11 @@ import { ensureNetworkGlobals } from "../../utils/globals";
 import { log, errMsg } from "../../utils/log";
 import type { RemarkableApi } from "rmapi-js";
 import * as client from "../remarkable/client";
-import { mapPdfPages, type PageRef } from "../remarkable/rmdoc";
+import {
+  mapPdfPages,
+  pdfIndexByPageId,
+  type PageRef,
+} from "../remarkable/rmdoc";
 import { parseRmPage } from "../remarkable/rmlines";
 import type { RmStroke, RmHighlight, CrdtId } from "../remarkable/rmlines";
 import {
@@ -29,7 +33,12 @@ import {
   pdfWidthToRm,
   type PdfPageSize,
 } from "../remarkable/geometry";
-import { allRecords, setRecord, type PushedItem } from "./state";
+import {
+  allRecords,
+  setRecord,
+  type PushedItem,
+  type SyncRecord,
+} from "./state";
 import { existingSig } from "./annotations";
 import {
   isSafeMode as engineIsSafeMode,
@@ -91,6 +100,79 @@ function annotationToRm(
     }
   }
   return out;
+}
+
+/**
+ * Device page tags the user removed in Zotero, by PDF page index: tags in the
+ * last-pulled baseline that are no longer on that page's tag note (all of them
+ * if the note was deleted).
+ */
+function removedPageTags(
+  att: Zotero.Item,
+  rec: SyncRecord,
+): Map<number, Set<string>> {
+  const out = new Map<number, Set<string>>();
+  const baseline = rec.pageTags ?? {};
+  if (Object.keys(baseline).length === 0) return out;
+  const ours = new Set(rec.annotationKeys ?? []);
+  const noteTags = new Map<number, Set<string>>();
+  for (const a of att.getAnnotations()) {
+    if (a.annotationType !== "note" || !ours.has(a.key)) continue;
+    let pi: number;
+    try {
+      pi = JSON.parse(a.annotationPosition).pageIndex;
+    } catch {
+      continue;
+    }
+    const set = noteTags.get(pi) ?? noteTags.set(pi, new Set()).get(pi)!;
+    for (const t of a.getTags()) set.add(t.tag);
+  }
+  for (const [page, names] of Object.entries(baseline)) {
+    const pi = Number(page);
+    const kept = noteTags.get(pi) ?? new Set<string>();
+    const gone = names.filter((n) => !kept.has(n));
+    if (gone.length) out.set(pi, new Set(gone));
+  }
+  return out;
+}
+
+/** Remove from the device the page tags the user removed in Zotero. */
+async function pushPageTagRemovals(
+  api: RemarkableApi,
+  att: Zotero.Item,
+  attKey: string,
+  rec: SyncRecord,
+): Promise<number> {
+  const removed = removedPageTags(att, rec);
+  if (removed.size === 0) return 0;
+  let count = 0;
+  await updateDocumentPages(api, rec.docId, new Map(), {
+    editContent: (content) => {
+      const indexOf = pdfIndexByPageId(content);
+      const before = content.pageTags ?? [];
+      const after = before.filter((t) => {
+        const pi = indexOf.get(t.pageId);
+        return !(pi !== undefined && removed.get(pi)?.has(t.name?.trim()));
+      });
+      count = before.length - after.length;
+      content.pageTags = after;
+      return count > 0;
+    },
+  });
+  // Update the baseline so the removal is not re-applied.
+  const pageTags: Record<string, string[]> = {};
+  for (const [page, names] of Object.entries(rec.pageTags ?? {})) {
+    const gone = removed.get(Number(page));
+    const left = gone ? names.filter((n) => !gone.has(n)) : names;
+    if (left.length) pageTags[page] = left;
+  }
+  rec.pageTags = pageTags;
+  await setRecord(attKey, rec);
+  const desc = [...removed]
+    .map(([pi, names]) => `p${pi + 1}: ${[...names].join(", ")}`)
+    .join("; ");
+  log(`push: "${rec.visibleName}" removed page tag(s) on device (${desc})`);
+  return count;
 }
 
 interface Template {
@@ -171,6 +253,8 @@ export async function pushAnnotations(
         done++;
         continue;
       }
+
+      await pushPageTagRemovals(api, att as Zotero.Item, attKey, rec);
 
       const pulled = new Set(rec.annotationKeys ?? []);
       const tracked = rec.pushedItems ?? [];

@@ -7,7 +7,7 @@
 // then commit the new root (putRootHash, guarded by the generation).
 
 import { GenerationError } from "rmapi-js";
-import type { RemarkableApi, RawEntry } from "rmapi-js";
+import type { RemarkableApi, RawEntry, DocumentContent } from "rmapi-js";
 import { log } from "../../utils/log";
 
 /** The document is not (yet) in the root listing — e.g. just uploaded. */
@@ -29,6 +29,7 @@ async function updateOnce(
   docId: string,
   pageRm: Map<string, Uint8Array>,
   bumpMetadata: boolean,
+  editContent?: (content: DocumentContent) => boolean,
 ): Promise<void> {
   const raw = api.raw;
   const [rootHash, generation, schema] = await raw.getRootHash();
@@ -61,6 +62,23 @@ async function updateOnce(
     const [fileEntry, finish] = await raw.putFile(fileId, bytes);
     await finish;
     upsert(doc.entries, fileEntry);
+  }
+
+  // Edit the document's .content (read fresh, so a retry sees the latest).
+  if (editContent) {
+    const contentEnt = doc.entries.find((e) => e.id.endsWith(".content"));
+    if (!contentEnt) throw new Error(`document ${docId} has no .content`);
+    const content = (await raw.getContent(
+      contentEnt.id,
+      contentEnt.hash,
+    )) as DocumentContent;
+    if (editContent(content)) {
+      const [newContent, finish] = await raw.putContent(contentEnt.id, content);
+      await finish;
+      upsert(doc.entries, newContent);
+    } else if (pageRm.size === 0) {
+      return; // nothing left to change
+    }
   }
 
   // Touch the document so the device notices the change.
@@ -109,20 +127,25 @@ async function updateOnce(
 
 /**
  * Replace the given pages' `.rm` blobs in a reMarkable document and commit.
- * Retries on a GenerationError (a concurrent change moved the root).
+ * `editContent` may modify the document's `.content` in the same commit (return
+ * true if it changed anything). Retries on a GenerationError (a concurrent
+ * change moved the root).
  */
 export async function updateDocumentPages(
   api: RemarkableApi,
   docId: string,
   pageRm: Map<string, Uint8Array>,
-  opts: { bumpMetadata?: boolean } = {},
+  opts: {
+    bumpMetadata?: boolean;
+    editContent?: (content: DocumentContent) => boolean;
+  } = {},
 ): Promise<void> {
-  if (pageRm.size === 0) return;
+  if (pageRm.size === 0 && !opts.editContent) return;
   const bump = opts.bumpMetadata ?? true;
   let lastErr: unknown;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      await updateOnce(api, docId, pageRm, bump);
+      await updateOnce(api, docId, pageRm, bump, opts.editContent);
       return;
     } catch (e) {
       if (e instanceof GenerationError) {

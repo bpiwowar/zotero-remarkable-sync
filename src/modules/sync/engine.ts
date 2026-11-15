@@ -328,7 +328,11 @@ export async function pullAll(
 
       progress?.(`Pulling annotations: ${rec.visibleName}`, pct);
       log(`pullAll: fetching "${rec.visibleName}" (${rec.docId})`);
-      const { pages } = await fetchAnnotations(api, rec.docId, entry.hash);
+      const { pages, pageTags } = await fetchAnnotations(
+        api,
+        rec.docId,
+        entry.hash,
+      );
 
       const path = await (att as Zotero.Item).getFilePathAsync();
       const bytes: Uint8Array = path
@@ -342,12 +346,16 @@ export async function pullAll(
         sizes,
         rec.annotationKeys ?? [],
         rec.deletedSigs ?? [],
+        pageTags,
       );
 
       const updated: SyncRecord = {
         ...rec,
         lastPulledVersion: entry.hash,
         annotationKeys: result.keys,
+        pageTags: Object.fromEntries(
+          pageTags.map((t) => [String(t.pdfPageIndex), t.names]),
+        ),
       };
       await setRecord(attKey, updated);
       summary.updated++;

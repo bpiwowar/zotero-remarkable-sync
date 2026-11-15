@@ -14,7 +14,7 @@ import {
   pageSizeAt,
   type PdfPageSize,
 } from "../remarkable/geometry";
-import type { RmDocPage } from "../remarkable/rmdoc";
+import type { RmDocPage, RmPageTags } from "../remarkable/rmdoc";
 import type { RmHighlight, RmStroke } from "../remarkable/rmlines";
 import { rmToZoteroHex } from "../remarkable/colors";
 import { log, errMsg } from "../../utils/log";
@@ -114,6 +114,12 @@ export function existingSig(item: Zotero.Item): string | null {
       if (!p || p.length < 2) return null;
       return sig("ink", pos.pageIndex, p[0], p[1]);
     }
+    if (type === "note") {
+      const names = pageTagNames(item.annotationComment);
+      const r = pos.rects?.[0];
+      if (!names || !r) return null;
+      return pageTagSig(pos.pageIndex, r[0], r[1], names);
+    }
   } catch {
     /* ignore unparseable */
   }
@@ -136,13 +142,50 @@ async function save(
 
 // --- User edits (comment / tags) on pulled annotations ----------------------
 
-/** True if the user added a comment or tags to this annotation in Zotero. */
+/**
+ * True if the user added a comment or tags to this annotation in Zotero. For a
+ * page-tag note, only tags that are not device tags count (a device tag the user
+ * removed is pushed to the device, not kept as an edit).
+ */
 function isUserEdited(item: Zotero.Item): boolean {
   try {
-    return !!item.annotationComment?.trim() || item.getTags().length > 0;
+    const tags = item.getTags().map((t) => t.tag);
+    const names = pageTagNames(item.annotationComment);
+    if (names) {
+      const set = new Set(names);
+      return tags.some((t) => !set.has(t));
+    }
+    return !!item.annotationComment?.trim() || tags.length > 0;
   } catch {
     return false;
   }
+}
+
+/**
+ * Comment and tags for the in-place update of an edited annotation `a` to the
+ * device's `p`: keep the user's comment (unless it is our generated page-tag
+ * text, then take the new one) and the user's own tags, plus the device tags.
+ */
+function mergedEdits(
+  a: Zotero.Item,
+  p: Pending,
+): { comment: string; tags: { name: string; type: number }[] } {
+  const generated = pageTagNames(a.annotationComment);
+  const comment = generated
+    ? String(p.json.comment ?? "")
+    : (a.annotationComment ?? "");
+  const tags = new Map<string, number>();
+  for (const t of (p.json.tags as { name: string }[] | undefined) ?? []) {
+    tags.set(t.name, 0);
+  }
+  for (const t of a.getTags()) {
+    if (generated?.includes(t.tag)) continue; // old device tag
+    tags.set(t.tag, t.type ?? 0);
+  }
+  return {
+    comment,
+    tags: [...tags].map(([name, type]) => ({ name, type })),
+  };
 }
 
 type BBox = [number, number, number, number];
@@ -295,6 +338,66 @@ function buildHighlighterStroke(
   };
 }
 
+// --- Page tags --------------------------------------------------------------
+
+/** Comment prefix identifying a note created from reMarkable page tags. */
+const PAGE_TAG_PREFIX = "reMarkable page tags: ";
+/** Note icon size and margin from the page's top-left corner, in PDF points. */
+const NOTE_SIZE = 22;
+const NOTE_MARGIN = 8;
+
+function pageTagComment(names: string[]): string {
+  return PAGE_TAG_PREFIX + names.join(", ");
+}
+
+/** Tag names encoded in a page-tag note's comment, or null if not one. */
+export function pageTagNames(
+  comment: string | undefined | null,
+): string[] | null {
+  if (!comment?.startsWith(PAGE_TAG_PREFIX)) return null;
+  return comment
+    .slice(PAGE_TAG_PREFIX.length)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .sort();
+}
+
+function pageTagSig(
+  pageIndex: number,
+  x: number,
+  y: number,
+  names: string[],
+): string {
+  return sig("note", pageIndex, x, y, `tags:${[...names].sort().join(",")}`);
+}
+
+/**
+ * A note annotation in the page's top-left corner carrying the page's device
+ * tags as Zotero tags (filterable in the reader sidebar / tag selector).
+ */
+function buildPageTagNote(
+  pageIndex: number,
+  names: string[],
+  size: PdfPageSize,
+): Pending {
+  const x1 = NOTE_MARGIN;
+  const y2 = size.height - NOTE_MARGIN;
+  const rect = [x1, y2 - NOTE_SIZE, x1 + NOTE_SIZE, y2];
+  return {
+    signature: pageTagSig(pageIndex, rect[0], rect[1], names),
+    json: {
+      type: "note",
+      color: "#ffd400",
+      pageLabel: String(pageIndex + 1),
+      sortIndex: sortIndex(pageIndex, 0),
+      position: { pageIndex, rects: [rect] },
+      comment: pageTagComment(names),
+      tags: names.map((name) => ({ name })),
+    },
+  };
+}
+
 function buildInk(
   pageIndex: number,
   stroke: RmStroke,
@@ -343,11 +446,21 @@ export async function applyAnnotations(
   sizes: PdfPageSize[],
   ourKeys: string[] = [],
   deletedSigs: string[] = [],
+  pageTags: RmPageTags[] = [],
 ): Promise<ApplyResult> {
   const suppressed = new Set(deletedSigs);
   // Build the device's current set: pendings to create + their signatures.
   const pendings: Pending[] = [];
   const incoming = new Set<string>();
+  for (const { pdfPageIndex, names } of pageTags) {
+    const p = buildPageTagNote(
+      pdfPageIndex,
+      names,
+      pageSizeAt(sizes, pdfPageIndex),
+    );
+    pendings.push(p);
+    incoming.add(p.signature);
+  }
   for (const { pdfPageIndex, page } of docPages) {
     const size = pageSizeAt(sizes, pdfPageIndex);
     const built = [
@@ -410,11 +523,7 @@ export async function applyAnnotations(
   for (const a of edited) {
     const p = findReplacement(a, pendings, consumed);
     if (p) {
-      const json = {
-        ...p.json,
-        comment: a.annotationComment ?? "",
-        tags: a.getTags().map((t) => ({ name: t.tag, type: t.type ?? 0 })),
-      };
+      const json = { ...p.json, ...mergedEdits(a, p) };
       if (await save(attachment, json, a.key)) {
         consumed.add(p);
         present.add(p.signature);

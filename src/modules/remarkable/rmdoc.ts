@@ -19,9 +19,55 @@ export interface RmDocPage {
   page: RmPage;
 }
 
+/** Tags set on one page on the device (the page-tag feature). */
+export interface RmPageTags {
+  /** 0-based PDF page index */
+  pdfPageIndex: number;
+  /** tag names, sorted and de-duplicated */
+  names: string[];
+}
+
 export interface RmDocAnnotations {
   pages: RmDocPage[];
+  pageTags: RmPageTags[];
   content: DocumentContent | null;
+}
+
+/** Group the document's page tags by PDF page index. */
+function pageTagsOf(
+  content: DocumentContent | null,
+  pageIds: string[],
+): RmPageTags[] {
+  const tags = content?.pageTags;
+  if (!tags?.length) return [];
+  const indexOf = pdfIndexByPageId(content, pageIds);
+  const byPage = new Map<number, Set<string>>();
+  for (const t of tags) {
+    const idx = indexOf.get(t.pageId);
+    const name = t.name?.trim();
+    if (idx === undefined || !name) continue; // page gone, or blank tag
+    (byPage.get(idx) ?? byPage.set(idx, new Set()).get(idx)!).add(name);
+  }
+  return [...byPage]
+    .sort(([a], [b]) => a - b)
+    .map(([pdfPageIndex, names]) => ({
+      pdfPageIndex,
+      names: [...names].sort(),
+    }));
+}
+
+/** Map each reMarkable page uuid to its 0-based PDF page index. */
+export function pdfIndexByPageId(
+  content: DocumentContent | null,
+  pageIds: string[] = orderedPageIds(content),
+): Map<string, number> {
+  const redirect = content?.redirectionPageMap;
+  const indexOf = new Map<string, number>();
+  pageIds.forEach((id, i) => {
+    const mapped = redirect?.[i];
+    indexOf.set(id, typeof mapped === "number" && mapped >= 0 ? mapped : i);
+  });
+  return indexOf;
 }
 
 /** Ordered list of page UUIDs for a document. */
@@ -96,7 +142,7 @@ export async function fetchAnnotations(
     pages.push({ pdfPageIndex, page: parsed });
   }
 
-  return { pages, content };
+  return { pages, pageTags: pageTagsOf(content, pageIds), content };
 }
 
 /**

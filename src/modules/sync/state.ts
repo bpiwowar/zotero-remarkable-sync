@@ -26,6 +26,9 @@ export interface SyncRecord {
   pushedItems?: PushedItem[];
   /** signatures of annotations deleted in Zotero, so pull won't re-create them */
   deletedSigs?: string[];
+  /** device page tags at the last pull, by PDF page index — the baseline to
+   *  tell a tag removed in Zotero from one added on the device */
+  pageTags?: Record<string, string[]>;
 }
 
 export interface PushedItem {
