@@ -1,11 +1,11 @@
 // Create native Zotero annotations (highlights + ink) on a PDF attachment from
 // parsed reMarkable pages.
 //
-// Pull is *non-destructive*: we never delete Zotero annotations (there is no
-// Zotero -> reMarkable path yet, so the Zotero side must be preserved). Instead
-// we dedup against the annotations already on the attachment by a content
-// signature and only create the ones that are missing. Re-pulling is therefore
-// idempotent and safe.
+// Pull mirrors the device for annotations *we* created: device annotations are
+// deduped by a content signature against what is on the attachment, missing
+// ones are created, and ours that vanished from the device are removed. The
+// user's own annotations are never touched, and neither is any comment or tag
+// the user added to a pulled annotation (see applyAnnotations).
 
 import {
   rectToZotero,
@@ -123,8 +123,8 @@ export function existingSig(item: Zotero.Item): string | null {
 async function save(
   attachment: Zotero.Item,
   json: Record<string, unknown>,
+  key: string = generateKey(),
 ): Promise<string | null> {
-  const key = generateKey();
   try {
     await Zotero.Annotations.saveFromJSON(attachment, { key, ...json } as any);
     return key;
@@ -132,6 +132,84 @@ async function save(
     log(`saveAnnotation(${json.type}) failed:`, errMsg(e));
     return null;
   }
+}
+
+// --- User edits (comment / tags) on pulled annotations ----------------------
+
+/** True if the user added a comment or tags to this annotation in Zotero. */
+function isUserEdited(item: Zotero.Item): boolean {
+  try {
+    return !!item.annotationComment?.trim() || item.getTags().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+type BBox = [number, number, number, number];
+
+/** Bounding box of an annotation position (rects or ink paths). */
+function positionBBox(pos: {
+  rects?: number[][];
+  paths?: number[][];
+}): BBox | null {
+  let x0 = Infinity,
+    y0 = Infinity,
+    x1 = -Infinity,
+    y1 = -Infinity;
+  for (const r of pos.rects ?? []) {
+    x0 = Math.min(x0, r[0]);
+    y0 = Math.min(y0, r[1]);
+    x1 = Math.max(x1, r[2]);
+    y1 = Math.max(y1, r[3]);
+  }
+  for (const p of pos.paths ?? []) {
+    for (let i = 0; i + 1 < p.length; i += 2) {
+      x0 = Math.min(x0, p[i]);
+      x1 = Math.max(x1, p[i]);
+      y0 = Math.min(y0, p[i + 1]);
+      y1 = Math.max(y1, p[i + 1]);
+    }
+  }
+  return x0 <= x1 && y0 <= y1 ? [x0, y0, x1, y1] : null;
+}
+
+function overlapArea(a: BBox, b: BBox): number {
+  const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+  const h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+/**
+ * Among the not-yet-consumed pendings, find the one that most likely replaces
+ * `item` on the device: same type, same page, largest overlapping area.
+ */
+function findReplacement(
+  item: Zotero.Item,
+  pendings: Pending[],
+  consumed: Set<Pending>,
+): Pending | null {
+  let pos: { pageIndex: number; rects?: number[][]; paths?: number[][] };
+  try {
+    pos = JSON.parse(item.annotationPosition);
+  } catch {
+    return null;
+  }
+  const box = positionBBox(pos);
+  if (!box) return null;
+  let best: Pending | null = null;
+  let bestArea = 0;
+  for (const p of pendings) {
+    if (consumed.has(p) || p.json.type !== item.annotationType) continue;
+    const ppos = p.json.position as typeof pos;
+    if (ppos.pageIndex !== pos.pageIndex) continue;
+    const pbox = positionBBox(ppos);
+    const area = pbox ? overlapArea(box, pbox) : 0;
+    if (area > bestArea) {
+      best = p;
+      bestArea = area;
+    }
+  }
+  return best;
 }
 
 // --- Builders ---------------------------------------------------------------
@@ -248,6 +326,8 @@ export interface ApplyResult {
   keys: string[];
   added: number;
   removed: number;
+  /** pulled annotations with user edits updated in place to match the device */
+  updated: number;
 }
 
 /**
@@ -291,6 +371,7 @@ export async function applyAnnotations(
   const ourSet = new Set(ourKeys);
   const present = new Set<string>();
   const keptKeys: string[] = [];
+  const edited: Zotero.Item[] = [];
   let removed = 0;
 
   // Pass over existing annotations: delete ours that vanished; index the rest.
@@ -299,7 +380,9 @@ export async function applyAnnotations(
     if (ourSet.has(a.key)) {
       if (s && incoming.has(s)) {
         keptKeys.push(a.key);
-        if (s) present.add(s);
+        present.add(s);
+      } else if (isUserEdited(a)) {
+        edited.push(a); // never lose the user's comment/tags — resolved below
       } else {
         try {
           await a.eraseTx();
@@ -313,6 +396,38 @@ export async function applyAnnotations(
     }
   }
 
+  // A pulled annotation the user commented/tagged vanished from the device.
+  // If the device annotation was merely modified (extended, re-drawn), update
+  // the Zotero one in place — same key, so links from notes keep working —
+  // preserving its comment and tags. If it was deleted on the device, keep it
+  // and stop tracking it: it becomes the user's own annotation.
+  const consumed = new Set<Pending>();
+  for (const p of pendings) {
+    if (present.has(p.signature) || suppressed.has(p.signature))
+      consumed.add(p);
+  }
+  let updated = 0;
+  for (const a of edited) {
+    const p = findReplacement(a, pendings, consumed);
+    if (p) {
+      const json = {
+        ...p.json,
+        comment: a.annotationComment ?? "",
+        tags: a.getTags().map((t) => ({ name: t.tag, type: t.type ?? 0 })),
+      };
+      if (await save(attachment, json, a.key)) {
+        consumed.add(p);
+        present.add(p.signature);
+        keptKeys.push(a.key);
+        updated++;
+        continue;
+      }
+    }
+    log(`pull: keeping edited annotation ${a.key} (gone from device)`);
+    const s = existingSig(a);
+    if (s) present.add(s);
+  }
+
   // Add device annotations not already present (and not deleted in Zotero).
   const newKeys: string[] = [];
   for (const p of pendings) {
@@ -324,5 +439,10 @@ export async function applyAnnotations(
     }
   }
 
-  return { keys: [...keptKeys, ...newKeys], added: newKeys.length, removed };
+  return {
+    keys: [...keptKeys, ...newKeys],
+    added: newKeys.length,
+    removed,
+    updated,
+  };
 }

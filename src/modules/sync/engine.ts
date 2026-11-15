@@ -327,7 +327,7 @@ export async function pullAll(
       summary.annotations += result.added;
       summary.removed += result.removed;
       log(
-        `pullAll: "${rec.visibleName}" -> +${result.added} -${result.removed} annotation(s)`,
+        `pullAll: "${rec.visibleName}" -> +${result.added} -${result.removed} ~${result.updated} annotation(s)`,
       );
     } catch (e) {
       log(`pullAll: FAILED "${rec.visibleName}": ${errMsg(e)}`);
