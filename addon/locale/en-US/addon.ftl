@@ -2,10 +2,12 @@ startup-begin = reMarkable Sync is loading
 startup-finish = reMarkable Sync is ready
 
 menuitem-sync-now = reMarkable: Sync now
-menuitem-push = reMarkable: Push annotations to device
-menuitem-force-pull = reMarkable: Force re-pull annotations
-menuitem-clear-pulled = reMarkable: Remove pulled annotations
-menuitem-cleanup = reMarkable: Clean up device folder…
+tools-menu = reMarkable
+tools-sync-now = Sync now
+tools-push = Push annotations to device
+tools-force-pull = Force re-pull annotations
+tools-clear-pulled = Remove pulled annotations
+tools-cleanup = Clean up device folder…
 menuitem-add-to-sync = reMarkable: Add to sync
 menuitem-remove-from-sync = reMarkable: Remove from sync
 menuitem-overwrite-from-zotero = reMarkable: Overwrite device from Zotero
@@ -62,3 +64,9 @@ unsync-btn-delete = Delete on reMarkable
 unsync-btn-keep = Keep on reMarkable
 unsync-pull-first = Pull annotations from the reMarkable first
 unsync-done = Removed from sync
+unsync-delete-how = Move the reMarkable { $count ->
+    [1] copy
+   *[other] copies
+} to the reMarkable trash (recoverable from the tablet), or delete permanently?
+unsync-btn-trash = Move to trash
+unsync-btn-purge = Delete permanently

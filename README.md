@@ -61,7 +61,7 @@ device token is stored in Zotero preferences.
   <https://my.remarkable.com/device/browser/connect>.
 - **Sync**: tag an item `@remarkable` (right-click → _reMarkable: Add to sync_),
   then the toolbar **Sync now** button (or set an interval in preferences).
-- **Tools menu**: _Sync now_, _Force re-pull annotations_, _Remove pulled
+- **Tools → reMarkable**: _Sync now_, _Force re-pull annotations_, _Remove pulled
   annotations_ (removes only plugin-created annotations), _Clean up device
   folder…_ (see below).
 - **Cleanup**: _Clean up device folder…_ lists documents in the reMarkable sync

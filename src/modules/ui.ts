@@ -25,6 +25,7 @@ const SECTION_ID = `${config.addonRef}-status`;
 const ELEMENT_IDS = [
   `${ID}-tb-syncnow`,
   `${ID}-style`,
+  `${ID}-tools-menu`,
   `${ID}-tools-syncnow`,
   `${ID}-tools-push`,
   `${ID}-tools-forcepull`,
@@ -330,7 +331,7 @@ export async function runOverwriteFromRemarkable(
 function askUnsync(
   win: Window,
   count: number,
-): { deleteRemote: boolean; pullFirst: boolean } | null {
+): { deleteRemote: boolean; purge: boolean; pullFirst: boolean } | null {
   const ps = ztoolkit.getGlobal("Services").prompt;
   // Button 1 (Cancel) is what Escape/close returns; the default button follows
   // the deleteOnUnsync pref.
@@ -354,7 +355,25 @@ function askUnsync(
     pull,
   );
   if (button === 1) return null;
-  return { deleteRemote: button === 0, pullFirst: pull.value };
+  if (button === 2)
+    return { deleteRemote: false, purge: false, pullFirst: pull.value };
+  // Deleting: trash (recoverable, default) or purge. Escape cancels.
+  const how = ps.confirmEx(
+    win as any,
+    getString("unsync-title"),
+    getString("unsync-delete-how", { args: { count } }),
+    ps.BUTTON_POS_0 * ps.BUTTON_TITLE_IS_STRING +
+      ps.BUTTON_POS_1 * ps.BUTTON_TITLE_CANCEL +
+      ps.BUTTON_POS_2 * ps.BUTTON_TITLE_IS_STRING +
+      ps.BUTTON_POS_0_DEFAULT,
+    getString("unsync-btn-trash"),
+    "",
+    getString("unsync-btn-purge"),
+    null as any,
+    {},
+  );
+  if (how === 1) return null;
+  return { deleteRemote: true, purge: how === 2, pullFirst: pull.value };
 }
 
 /** "Remove from sync" with confirmation (and optional final pull). */
@@ -415,7 +434,7 @@ function askOrphan(
       index: index + 1,
       total,
       modified: new Date(
-        Number(orphan.entry.lastModified) || orphan.entry.lastModified,
+        Number(orphan.entry.lastModified) || orphan.entry.lastModified || 0,
       ).toLocaleString(),
     },
   });
@@ -594,46 +613,23 @@ function registerToolsMenu(win: Window): void {
   const doc = win.document;
   const toolsPopup = doc.getElementById("menu_ToolsPopup");
   if (!toolsPopup) return;
-  toolsPopup.appendChild(
-    makeMenuitem(
-      doc,
-      "tools-syncnow",
-      getString("menuitem-sync-now"),
-      () => void runSyncNow(),
-    ),
-  );
-  toolsPopup.appendChild(
-    makeMenuitem(
-      doc,
-      "tools-push",
-      getString("menuitem-push"),
-      () => void runPush(),
-    ),
-  );
-  toolsPopup.appendChild(
-    makeMenuitem(
-      doc,
-      "tools-forcepull",
-      getString("menuitem-force-pull"),
-      () => void runForcePull(),
-    ),
-  );
-  toolsPopup.appendChild(
-    makeMenuitem(
-      doc,
-      "tools-clearpulled",
-      getString("menuitem-clear-pulled"),
-      () => void runClearPulled(),
-    ),
-  );
-  toolsPopup.appendChild(
-    makeMenuitem(
-      doc,
-      "tools-cleanup",
-      getString("menuitem-cleanup"),
-      () => void runCleanup(win),
-    ),
-  );
+  // One "reMarkable" submenu instead of many prefixed items.
+  const menu = (doc as any).createXULElement("menu") as Element;
+  menu.id = `${ID}-tools-menu`;
+  menu.setAttribute("label", getString("tools-menu"));
+  const popup = (doc as any).createXULElement("menupopup") as Element;
+  menu.appendChild(popup);
+  const entries: [string, Parameters<typeof getString>[0], () => void][] = [
+    ["tools-syncnow", "tools-sync-now", () => void runSyncNow()],
+    ["tools-push", "tools-push", () => void runPush()],
+    ["tools-forcepull", "tools-force-pull", () => void runForcePull()],
+    ["tools-clearpulled", "tools-clear-pulled", () => void runClearPulled()],
+    ["tools-cleanup", "tools-cleanup", () => void runCleanup(win)],
+  ];
+  for (const [suffix, label, run] of entries) {
+    popup.appendChild(makeMenuitem(doc, suffix, getString(label), run));
+  }
+  toolsPopup.appendChild(menu);
 }
 
 function registerContextMenu(win: Window): void {
