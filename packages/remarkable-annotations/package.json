@@ -15,6 +15,6 @@
   },
   "dependencies": {
     "fflate": "^0.8.3",
-    "rmapi-js": "^14.4.0"
+    "rmapi-js": "^14.4.2"
   }
 }

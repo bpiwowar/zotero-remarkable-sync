@@ -34,7 +34,7 @@ const stroke = {
     { x: 30, y: 40 },
   ],
 };
-// Colour 14 is outside rmapi-js's palette: must still survive the round trip.
+// Colour 14 (a tablet highlight colour) must survive the round trip.
 const highlights = [3, 14].map((colorIndex) => ({
   text: "some text",
   colorIndex,

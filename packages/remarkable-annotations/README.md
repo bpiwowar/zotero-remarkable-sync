@@ -14,7 +14,7 @@ workspace (see [Publishing](#publishing)).
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | [`rmlines.ts`](src/rmlines.ts)   | `parseRmPage`: a `.rm` v6 page as strokes, highlights, and the ids needed to append items.                              |
 | [`rmwrite.ts`](src/rmwrite.ts)   | `rebuildPage`: removes items by id and appends new ones. `splitStructure`, `blankStructure`: templates for empty pages. |
-| [`rmscene.ts`](src/rmscene.ts)   | rmapi-js's scene parser and serializer, with a patch for codes it rejects.                                              |
+| [`rmscene.ts`](src/rmscene.ts)   | rmapi-js's scene parser and serializer, imported from its `dist` folder.                                                |
 | [`rmdoc.ts`](src/rmdoc.ts)       | `fetchAnnotations`, `mapPdfPages`, `pdfIndexByPageId`: a document's pages, mapped to PDF pages.                         |
 | [`document.ts`](src/document.ts) | `ensureFolder`, `uploadPdf`, `putPages`: folders by path, uploads with the full page list, page writes in one commit.   |
 | [`geometry.ts`](src/geometry.ts) | reMarkable coordinates ↔ PDF points, pen widths, page sizes.                                                            |
@@ -119,16 +119,6 @@ These were checked on a real tablet:
 - **Per-item authors:** `meta.authors` sets the author of each added item. The
   plugin uses this to tag each item with the annotation it mirrors (an author
   uuid encoding the Zotero key).
-
-### Unknown colour and pen codes
-
-rmapi-js rejects colour and pen codes outside its lists, and then keeps the
-whole item as an opaque block: the tablet's highlights in colours 14 and 15
-would be invisible. [`rmscene.ts`](src/rmscene.ts) accepts any code. The colour
-fix is in rmapi-js 14.4.1
-([#140](https://github.com/erikbrinkman/rmapi-js/pull/140)), the pen fix is
-proposed in [#141](https://github.com/erikbrinkman/rmapi-js/pull/141). Once it
-is released, the patch can go.
 
 ## Uploading with the real page list
 

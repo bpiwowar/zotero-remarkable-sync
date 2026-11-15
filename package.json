@@ -36,9 +36,9 @@
   },
   "dependencies": {
     "fflate": "^0.8.3",
-    "rmapi-js": "^14.4.0",
-    "zotero-plugin-toolkit": "^5.1.0-beta.13",
-    "remarkable-annotations": "*"
+    "remarkable-annotations": "*",
+    "rmapi-js": "^14.4.2",
+    "zotero-plugin-toolkit": "^5.1.0-beta.13"
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
