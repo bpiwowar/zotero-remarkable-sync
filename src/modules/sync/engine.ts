@@ -38,6 +38,29 @@ export function isItemSynced(item: Zotero.Item): boolean {
 }
 
 /**
+ * Number of pages of a PDF attachment, from Zotero's PDF worker (or the
+ * full-text index). Returns null when unknown — callers must then not assume a
+ * page layout.
+ */
+export async function pdfPageCount(att: Zotero.Item): Promise<number | null> {
+  try {
+    const r = await (Zotero as any).PDFWorker.getFullText(att.id, 1);
+    if (Number.isInteger(r?.totalPages) && r.totalPages > 0) {
+      return r.totalPages;
+    }
+  } catch (e) {
+    log(`pdfPageCount: PDF worker failed: ${errMsg(e)}`);
+  }
+  try {
+    const r = await Zotero.Fulltext.getPages(att.id);
+    if (r && r.total > 0) return r.total;
+  } catch {
+    /* not indexed */
+  }
+  return null;
+}
+
+/**
  * Safe mode (default on): never modify annotations on the device — pull only.
  * PDFs are still uploaded, since storing a document is non-destructive.
  */
@@ -202,7 +225,10 @@ export async function pushAll(
       }
 
       log(`pushAll: uploading "${name}" (${bytes.length} bytes) …`);
-      const entry = await client.uploadPdf(api, name, bytes, folderId);
+      const pageCount = await pdfPageCount(att);
+      const entry = await client.uploadPdf(api, name, bytes, folderId, {
+        pageCount: pageCount ?? undefined,
+      });
       // When re-uploading a fresh document, reset annotation tracking so every
       // Zotero annotation gets re-pushed onto the fresh document.
       const record: SyncRecord = {

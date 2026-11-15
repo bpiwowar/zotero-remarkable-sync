@@ -10,6 +10,14 @@ import { GenerationError } from "rmapi-js";
 import type { RemarkableApi, RawEntry } from "rmapi-js";
 import { log } from "../../utils/log";
 
+/** The document is not (yet) in the root listing — e.g. just uploaded. */
+class DocNotInRootError extends Error {
+  constructor(docId: string) {
+    super(`document ${docId} not found in root`);
+    this.name = "DocNotInRootError";
+  }
+}
+
 function upsert(entries: RawEntry[], entry: RawEntry): void {
   const i = entries.findIndex((e) => e.id === entry.id);
   if (i >= 0) entries[i] = entry;
@@ -32,7 +40,7 @@ async function updateOnce(
   // would drop any of them (safety against a bug in the entry rebuild).
   const originalIds = new Set(root.entries.map((e) => e.id));
   const docEntry = root.entries.find((e) => e.id === docId);
-  if (!docEntry) throw new Error(`document ${docId} not found in root`);
+  if (!docEntry) throw new DocNotInRootError(docId);
 
   const doc = await raw.getEntries(`${docId}.docSchema`, docEntry.hash);
 
@@ -120,6 +128,12 @@ export async function updateDocumentPages(
       if (e instanceof GenerationError) {
         log(`rmupload: generation changed, retry ${attempt + 1}`);
         lastErr = e;
+        continue;
+      }
+      if (e instanceof DocNotInRootError) {
+        log(`rmupload: ${e.message}, retry ${attempt + 1} after a delay`);
+        lastErr = e;
+        await Zotero.Promise.delay(2000 * (attempt + 1));
         continue;
       }
       throw e;

@@ -31,7 +31,11 @@ import {
 } from "../remarkable/geometry";
 import { allRecords, setRecord, type PushedItem } from "./state";
 import { existingSig } from "./annotations";
-import { isSafeMode as engineIsSafeMode, type ProgressFn } from "./engine";
+import {
+  isSafeMode as engineIsSafeMode,
+  pdfPageCount,
+  type ProgressFn,
+} from "./engine";
 
 const IO = globalThis as any;
 const PUSHABLE = new Set(["highlight", "underline", "ink"]);
@@ -153,8 +157,17 @@ export async function pushAnnotations(
     try {
       const libraryID = rec.libraryID ?? Zotero.Libraries.userLibraryID;
       const att = Zotero.Items.getByLibraryAndKey(libraryID, attKey);
-      const entry = byId.get(rec.docId);
+      // A document uploaded moments ago may not be in the listing yet: fall back
+      // to the hash returned by the upload.
+      const listed = byId.get(rec.docId);
+      const entry = listed ?? (rec.docHash ? { hash: rec.docHash } : undefined);
+      if (!listed && entry) {
+        log(`push: "${rec.visibleName}" not listed yet, using upload hash`);
+      }
       if (!att || !entry) {
+        log(
+          `push: skip "${rec.visibleName}" (${!att ? "no attachment" : "not on cloud"})`,
+        );
         done++;
         continue;
       }
@@ -178,6 +191,19 @@ export async function pushAnnotations(
         : new Uint8Array();
       const sizes = readPdfPageSizes(pdfBytes);
       const pageMap = await mapPdfPages(api, rec.docId, entry.hash);
+      // A document uploaded with a placeholder page list (rmapi-js putPdf) and
+      // not yet opened on the device lists fewer pages than the PDF: page
+      // uuids are not final, so writing pages now would target the wrong ones.
+      const total = await pdfPageCount(att as Zotero.Item);
+      if (total && pageMap.size < total) {
+        log(
+          `push: "${rec.visibleName}" lists ${pageMap.size}/${total} pages on ` +
+            `the device — open it once on the reMarkable, then sync again`,
+        );
+        summary.skipped += managed.length;
+        done++;
+        continue;
+      }
       const findRef = (pageUuid: string) => {
         for (const [pi, r] of pageMap)
           if (r.pageUuid === pageUuid) return { pdfIdx: pi, ref: r };
