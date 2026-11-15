@@ -29,11 +29,13 @@
     "test": "zotero-plugin test",
     "test:parser": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && node test/rmlines.verify.mjs",
     "test:writer": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && esbuild src/modules/remarkable/rmwrite.ts --bundle --format=esm --outfile=.scaffold/rmwrite.mjs --log-level=error && node test/rmwrite.verify.mjs",
+    "test:scene": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && esbuild src/modules/remarkable/rmwrite.ts --bundle --format=esm --outfile=.scaffold/rmwrite.mjs --log-level=error && node test/rmscene.verify.mjs",
     "update-deps": "npm update --save",
-    "prepare": "husky"
+    "prepare": "husky",
+    "devtest": "esbuild scripts/devtest.ts --bundle --platform=node --format=esm --outfile=.scaffold/devtest.mjs --log-level=error && node .scaffold/devtest.mjs"
   },
   "dependencies": {
-    "rmapi-js": "^10.0.1",
+    "rmapi-js": "^14.4.0",
     "zotero-plugin-toolkit": "^5.1.0-beta.13"
   },
   "devDependencies": {

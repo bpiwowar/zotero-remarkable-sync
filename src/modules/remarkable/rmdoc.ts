@@ -1,7 +1,6 @@
-// Download a reMarkable document's annotation layers: list its files via the
-// raw API, read the `.content` to get the ordered page list and the
-// redirectionPageMap (reMarkable page -> PDF page), then fetch and parse each
-// `{pageUuid}.rm` scene file.
+// Download a reMarkable document's annotation layers: list its files, read the
+// `.content` to get the ordered page list and the redirectionPageMap
+// (reMarkable page -> PDF page), then fetch and parse each `{pageUuid}.rm`.
 
 import type { RemarkableApi, DocumentContent } from "rmapi-js";
 import { parseRmPage, type RmPage } from "./rmlines";
@@ -87,6 +86,28 @@ function orderedPageIds(content: DocumentContent | null): string[] {
   return [];
 }
 
+/** A document's content and its page uuids, mapped to PDF pages and `.rm` files. */
+async function readDoc(api: RemarkableApi, id: string, hash: string) {
+  const ref = { id, hash };
+  const [{ entries }, content] = await Promise.all([
+    api.raw.getEntries(ref),
+    api.getContent(ref).then(
+      (c) => c as DocumentContent,
+      () => null,
+    ),
+  ]);
+  const rmByPage = new Map<string, { id: string; hash: string }>();
+  for (const e of entries) {
+    if (e.id.endsWith(".rm")) {
+      const base = e.id.slice(0, -3).split("/").pop()!; // strip dir + ".rm"
+      rmByPage.set(base, { id: e.id, hash: e.hash });
+    }
+  }
+  const pageIds = orderedPageIds(content);
+  const pdfIndex = pdfIndexByPageId(content, pageIds);
+  return { content, pageIds, pdfIndex, rmByPage };
+}
+
 /**
  * Fetch and parse every annotated page of a reMarkable document.
  *
@@ -99,51 +120,24 @@ export async function fetchAnnotations(
   id: string,
   hash: string,
 ): Promise<RmDocAnnotations> {
-  const { entries } = await api.raw.getEntries(`${id}.docSchema`, hash);
-
-  const contentEnt = entries.find((e) => e.id.endsWith(".content"));
-  let content: DocumentContent | null = null;
-  if (contentEnt) {
-    try {
-      content = (await api.raw.getContent(
-        contentEnt.id,
-        contentEnt.hash,
-      )) as DocumentContent;
-    } catch {
-      content = null;
-    }
-  }
-
-  const pageIds = orderedPageIds(content);
-  const redirect = content?.redirectionPageMap;
-
-  // Index .rm entries by page uuid for quick lookup.
-  const rmByPage = new Map<string, { id: string; hash: string }>();
-  for (const e of entries) {
-    if (e.id.endsWith(".rm")) {
-      const base = e.id.slice(0, -3).split("/").pop()!; // strip dir + ".rm"
-      rmByPage.set(base, { id: e.id, hash: e.hash });
-    }
-  }
-
+  const { content, pageIds, pdfIndex, rmByPage } = await readDoc(api, id, hash);
   const pages: RmDocPage[] = [];
-  for (let i = 0; i < pageIds.length; i++) {
-    const ent = rmByPage.get(pageIds[i]);
+  for (const pageUuid of pageIds) {
+    const ent = rmByPage.get(pageUuid);
     if (!ent) continue; // page has no annotation layer
     let parsed: RmPage;
     try {
-      const bytes = await api.raw.getHash(ent.id, ent.hash);
-      parsed = parseRmPage(bytes);
+      parsed = parseRmPage(await api.raw.getHash(ent));
     } catch {
       continue;
     }
     if (!parsed.strokes.length && !parsed.highlights.length) continue;
-
-    const mapped = redirect?.[i];
-    const pdfPageIndex = typeof mapped === "number" && mapped >= 0 ? mapped : i;
-    pages.push({ pdfPageIndex, pageUuid: pageIds[i], page: parsed });
+    pages.push({
+      pdfPageIndex: pdfIndex.get(pageUuid)!,
+      pageUuid,
+      page: parsed,
+    });
   }
-
   return { pages, pageTags: pageTagsOf(content, pageIds), content };
 }
 
@@ -156,37 +150,12 @@ export async function mapPdfPages(
   id: string,
   hash: string,
 ): Promise<Map<number, PageRef>> {
-  const { entries } = await api.raw.getEntries(`${id}.docSchema`, hash);
-  const contentEnt = entries.find((e) => e.id.endsWith(".content"));
-  let content: DocumentContent | null = null;
-  if (contentEnt) {
-    try {
-      content = (await api.raw.getContent(
-        contentEnt.id,
-        contentEnt.hash,
-      )) as DocumentContent;
-    } catch {
-      content = null;
-    }
-  }
-
-  const rmByPage = new Map<string, { id: string; hash: string }>();
-  for (const e of entries) {
-    if (e.id.endsWith(".rm")) {
-      const base = e.id.slice(0, -3).split("/").pop()!;
-      rmByPage.set(base, { id: e.id, hash: e.hash });
-    }
-  }
-
-  const pageIds = orderedPageIds(content);
-  const redirect = content?.redirectionPageMap;
+  const { pageIds, pdfIndex, rmByPage } = await readDoc(api, id, hash);
   const byPdfIndex = new Map<number, PageRef>();
-  for (let i = 0; i < pageIds.length; i++) {
-    const mapped = redirect?.[i];
-    const pdfPageIndex = typeof mapped === "number" && mapped >= 0 ? mapped : i;
-    byPdfIndex.set(pdfPageIndex, {
-      pageUuid: pageIds[i],
-      rmEntry: rmByPage.get(pageIds[i]),
+  for (const pageUuid of pageIds) {
+    byPdfIndex.set(pdfIndex.get(pageUuid)!, {
+      pageUuid,
+      rmEntry: rmByPage.get(pageUuid),
     });
   }
   return byPdfIndex;

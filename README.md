@@ -41,8 +41,12 @@ result back as native Zotero highlight/ink annotations.
 npm install        # also installs the husky pre-commit hook
 npm start          # launch Zotero with hot-reload
 npm run build      # build the .xpi and type-check
-npm test           # run unit tests
+npm test           # run unit tests (in Zotero)
 npm run lint:fix   # format + lint
+npm run test:parser && npm run test:writer && npm run test:scene
+                   # offline checks of the .rm reader/writer
+RM_DEVICE_TOKEN=... RM_SOURCE="<title prefix>" npm run devtest
+                   # live round trip on the cloud; writes only in "zotrem-dev"
 ```
 
 ### Connecting to reMarkable
@@ -89,8 +93,9 @@ conflict handling and known limits.
 
 Built on [`windingwind/zotero-plugin-template`](https://github.com/windingwind/zotero-plugin-template)
 and [`zotero-plugin-toolkit`](https://github.com/windingwind/zotero-plugin-toolkit).
-reMarkable cloud access via [`rmapi-js`](https://github.com/erikbrinkman/rmapi-js); `.rm`
-format understanding draws on [`rmscene`](https://github.com/ricklupton/rmscene) and
+reMarkable cloud access and `.rm` v6 parsing/serialization via
+[`rmapi-js`](https://github.com/erikbrinkman/rmapi-js); `.rm` format understanding
+draws on [`rmscene`](https://github.com/ricklupton/rmscene) and
 [`rmc`](https://github.com/ricklupton/rmc).
 
 ## License

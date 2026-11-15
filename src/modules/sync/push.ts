@@ -9,7 +9,8 @@
 
 import { ensureNetworkGlobals } from "../../utils/globals";
 import { log, errMsg } from "../../utils/log";
-import type { RemarkableApi } from "rmapi-js";
+import { HashNotFoundError } from "rmapi-js";
+import type { DocumentContent, ItemRef, RemarkableApi } from "rmapi-js";
 import * as client from "../remarkable/client";
 import {
   mapPdfPages,
@@ -23,7 +24,6 @@ import {
   splitStructure,
   blankStructure,
 } from "../remarkable/rmwrite";
-import { updateDocumentPages } from "../remarkable/rmupload";
 import { zoteroToRm } from "../remarkable/colors";
 import {
   readPdfPageSizes,
@@ -137,29 +137,29 @@ function removedPageTags(
   return out;
 }
 
-/** Remove from the device the page tags the user removed in Zotero. */
+/**
+ * Remove from the device the page tags the user removed in Zotero. Returns the
+ * document's new ref (unchanged if nothing was removed).
+ */
 async function pushPageTagRemovals(
   api: RemarkableApi,
+  ref: ItemRef,
   att: Zotero.Item,
   attKey: string,
   rec: SyncRecord,
-): Promise<number> {
+): Promise<ItemRef> {
   const removed = removedPageTags(att, rec);
-  if (removed.size === 0) return 0;
-  let count = 0;
-  await updateDocumentPages(api, rec.docId, new Map(), {
-    editContent: (content) => {
-      const indexOf = pdfIndexByPageId(content);
-      const before = content.pageTags ?? [];
-      const after = before.filter((t) => {
-        const pi = indexOf.get(t.pageId);
-        return !(pi !== undefined && removed.get(pi)?.has(t.name?.trim()));
-      });
-      count = before.length - after.length;
-      content.pageTags = after;
-      return count > 0;
-    },
+  if (removed.size === 0) return ref;
+  const content = (await api.getContent(ref)) as DocumentContent;
+  const indexOf = pdfIndexByPageId(content);
+  const before = content.pageTags ?? [];
+  const after = before.filter((t) => {
+    const pi = indexOf.get(t.pageId);
+    return !(pi !== undefined && removed.get(pi)?.has(t.name?.trim()));
   });
+  if (after.length < before.length) {
+    ref = await api.updateDocument(ref, { pageTags: after });
+  }
   // Update the baseline so the removal is not re-applied.
   const pageTags: Record<string, string[]> = {};
   for (const [page, names] of Object.entries(rec.pageTags ?? {})) {
@@ -173,7 +173,7 @@ async function pushPageTagRemovals(
     .map(([pi, names]) => `p${pi + 1}: ${[...names].join(", ")}`)
     .join("; ");
   log(`push: "${rec.visibleName}" removed page tag(s) on device (${desc})`);
-  return count;
+  return ref;
 }
 
 /**
@@ -213,7 +213,7 @@ async function loadTemplate(
   for (const ref of pageMap.values()) {
     if (!ref.rmEntry) continue;
     try {
-      const bytes = await api.raw.getHash(ref.rmEntry.id, ref.rmEntry.hash);
+      const bytes = await api.raw.getHash(ref.rmEntry);
       const parsed = parseRmPage(bytes);
       if (parsed.layerId) {
         return {
@@ -281,7 +281,14 @@ export async function pushAnnotations(
         continue;
       }
 
-      await pushPageTagRemovals(api, att as Zotero.Item, attKey, rec);
+      let ref: ItemRef = { id: rec.docId, hash: entry.hash };
+      ref = await pushPageTagRemovals(
+        api,
+        ref,
+        att as Zotero.Item,
+        attKey,
+        rec,
+      );
 
       const pulled = new Set(rec.annotationKeys ?? []);
       const tracked = rec.pushedItems ?? [];
@@ -306,7 +313,7 @@ export async function pushAnnotations(
         ? await IO.IOUtils.read(path)
         : new Uint8Array();
       const sizes = readPdfPageSizes(pdfBytes);
-      const pageMap = await mapPdfPages(api, rec.docId, entry.hash);
+      const pageMap = await mapPdfPages(api, ref.id, ref.hash);
       // A document uploaded with a placeholder page list (rmapi-js putPdf) and
       // not yet opened on the device lists fewer pages than the PDF: page
       // uuids are not final, so writing pages now would target the wrong ones.
@@ -415,10 +422,7 @@ export async function pushAnnotations(
         let bytes: Uint8Array;
         let ids: CrdtId[];
         if (found?.ref.rmEntry) {
-          const existing = await api.raw.getHash(
-            found.ref.rmEntry.id,
-            found.ref.rmEntry.hash,
-          );
+          const existing = await api.raw.getHash(found.ref.rmEntry);
           const parsed = parseRmPage(existing);
           if (!parsed.layerId) continue;
           const removeIds = new Set([
@@ -488,7 +492,7 @@ export async function pushAnnotations(
 
       if (pageRm.size > 0) {
         log(`push: "${rec.visibleName}" -> ${pageRm.size} page(s) rewritten`);
-        await updateDocumentPages(api, rec.docId, pageRm);
+        ref = await client.putPages(api, ref, pageRm);
         // Pulled annotations deleted on rewritten pages are gone from the
         // device too: stop tracking them.
         const gone = new Set(
@@ -516,6 +520,15 @@ export async function pushAnnotations(
         summary.pushed += writtenItems;
       }
     } catch (e) {
+      if (e instanceof HashNotFoundError) {
+        // The document changed on the cloud since we read it (e.g. new ink on
+        // the tablet, or not listed yet after an upload): nothing was written.
+        // The next sync pulls first, then pushes again.
+        log(`push: "${rec.visibleName}" changed meanwhile, retry next sync`);
+        summary.skipped++;
+        done++;
+        continue;
+      }
       log(`push: FAILED "${rec.visibleName}": ${errMsg(e)}`);
       summary.failed++;
       summary.errors.push(`${rec.visibleName}: ${errMsg(e)}`);

@@ -193,7 +193,7 @@ export async function applyDecisions(
       } else if (decision === "delete") {
         // Re-read the entry so we move the current hash, not a stale one.
         const current = await client.findById(api, orphan.entry.id);
-        if (current) await client.trashDoc(api, current.hash);
+        if (current) await client.trashDoc(api, current);
         log(`cleanup: moved "${name}" to reMarkable trash`);
         summary.trashed++;
       }

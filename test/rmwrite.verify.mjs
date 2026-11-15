@@ -11,14 +11,18 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const { parseRmPage } = await import(join(root, ".scaffold/rmlines.mjs"));
-const {
-  writeItems,
-  encodeAppend,
-  encodePageUpdate,
-  rebuildPage,
-  splitStructure,
-  blankStructure,
-} = await import(join(root, ".scaffold/rmwrite.mjs"));
+const { rebuildPage, splitStructure, blankStructure } = await import(
+  join(root, ".scaffold/rmwrite.mjs")
+);
+
+// Shorthands over rebuildPage.
+const encodePageUpdate = (bytes, strokes, highlights, meta) =>
+  rebuildPage(bytes, strokes, highlights, new Set(), meta);
+const encodeAppend = (...args) => encodePageUpdate(...args).bytes;
+const writeItems = (strokes, highlights) => {
+  const blank = blankStructure();
+  return encodeAppend(blank.structure, strokes, highlights, blank);
+};
 
 const mkStroke = (x) => ({
   tool: 17,

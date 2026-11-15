@@ -294,7 +294,7 @@ export async function pushAll(
       if (replacing && prev) {
         try {
           const old = await client.findById(api, prev.docId);
-          if (old) await client.trashDoc(api, old.hash);
+          if (old) await client.trashDoc(api, old);
           log(`pushAll: moved the old copy of "${name}" to reMarkable trash`);
         } catch (e) {
           log(`pushAll: could not trash old copy of "${name}": ${errMsg(e)}`);
@@ -540,7 +540,7 @@ export async function unsyncByKeys(attKeys: string[]): Promise<void> {
     if (api) {
       try {
         const entry = await client.findById(api, rec.docId);
-        if (entry) await client.trashDoc(api, entry.hash);
+        if (entry) await client.trashDoc(api, entry);
         log(`unsync: moved "${rec.visibleName}" to reMarkable trash`);
       } catch (e) {
         log(`unsync: trash failed for "${rec.visibleName}": ${errMsg(e)}`);
@@ -577,6 +577,8 @@ export async function removeFromSync(
   items: Zotero.Item[],
   opts: {
     deleteRemote?: boolean;
+    /** delete permanently instead of moving to the reMarkable trash */
+    purge?: boolean;
     pullFirst?: boolean;
     progress?: ProgressFn;
   } = {},
@@ -630,8 +632,13 @@ export async function removeFromSync(
       if (record && api && !keepRemote.has(att.key)) {
         try {
           const entry = await client.findById(api, record.docId);
-          if (entry) await client.deleteDoc(api, entry.hash);
-          log(`unsync: deleted "${record.visibleName}" from device`);
+          if (entry && opts.purge) {
+            await client.purgeDoc(api, entry);
+            log(`unsync: permanently deleted "${record.visibleName}"`);
+          } else if (entry) {
+            await client.trashDoc(api, entry);
+            log(`unsync: moved "${record.visibleName}" to reMarkable trash`);
+          }
         } catch (e) {
           // Best effort: leave the remote doc if deletion fails.
           log(

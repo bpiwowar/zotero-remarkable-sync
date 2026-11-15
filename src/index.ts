@@ -1,3 +1,4 @@
+import "./utils/polyfills"; // first: rmapi-js needs these at module load
 import { BasicTool } from "zotero-plugin-toolkit";
 import Addon from "./addon";
 import { config } from "../package.json";

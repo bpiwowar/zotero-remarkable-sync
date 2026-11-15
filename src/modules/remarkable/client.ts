@@ -1,15 +1,10 @@
 // Thin wrapper around rmapi-js, adapting it to the plugin: credential storage
-// in prefs, folder resolution by path, and retry handling for the low-level
-// put* operations (which throw GenerationError on a stale root generation).
+// in prefs, folder resolution by path, uploads with the full page list, and
+// page writes from raw `.rm` bytes. rmapi-js retries generation conflicts.
 
-import { register, remarkable, GenerationError } from "rmapi-js";
-import type {
-  DocumentContent,
-  Entry,
-  Metadata,
-  RemarkableApi,
-  SimpleEntry,
-} from "rmapi-js";
+import { register, remarkable } from "rmapi-js";
+import type { DocumentContent, Entry, ItemRef, RemarkableApi } from "rmapi-js";
+import { parseRmScene } from "./rmscene";
 import { getPref, setPref, clearPref } from "../../utils/prefs";
 import { ensureNetworkGlobals } from "../../utils/globals";
 import { log } from "../../utils/log";
@@ -59,29 +54,6 @@ export function resetApi(): void {
 }
 
 /**
- * Retry a low-level mutation that can fail with GenerationError when the local
- * view of the root generation is stale.
- */
-async function withGenerationRetry<T>(
-  fn: () => Promise<T>,
-  tries = 5,
-): Promise<T> {
-  let lastErr: unknown;
-  for (let i = 0; i < tries; i++) {
-    try {
-      return await fn();
-    } catch (e) {
-      if (e instanceof GenerationError) {
-        lastErr = e;
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw lastErr;
-}
-
-/**
  * Resolve a "/"-separated folder path to a collection id on the reMarkable,
  * creating any missing folders along the way. Returns "" for the root.
  */
@@ -107,9 +79,7 @@ export async function ensureFolder(
     if (found) {
       parent = found.id;
     } else {
-      const created = await withGenerationRetry(() =>
-        api.putFolder(name, { parent }),
-      );
+      const created = await api.putFolder(name, { parent });
       parent = created.id;
     }
   }
@@ -128,9 +98,8 @@ function uuid4(): string {
  * rmapi-js's `putPdf` writes a placeholder `.content` claiming a single page;
  * the device only writes the real page list when the document is first opened.
  * Until then, annotations cannot be mapped to pages. When the page count is
- * known we instead upload a `.content` listing one page uuid per PDF page (the
- * same v1 layout rmapi-js uses, just complete), so annotations can be pushed
- * right away.
+ * known we follow up with the full page list (one page uuid per PDF page) and
+ * the page tags, so annotations can be pushed right away.
  */
 export async function uploadPdf(
   api: RemarkableApi,
@@ -143,118 +112,46 @@ export async function uploadPdf(
     /** page tags to set, by 0-based PDF page index (needs pageCount) */
     pageTags?: Record<string, string[]>;
   } = {},
-): Promise<SimpleEntry> {
+): Promise<ItemRef> {
   const { tags = [], pageCount, pageTags = {} } = opts;
+  const ref = await api.putPdf(visibleName, bytes, { parent: folderId, tags });
   if (!pageCount || pageCount < 1) {
-    log(`uploadPdf: page count unknown for "${visibleName}", using putPdf`);
-    return withGenerationRetry(() =>
-      api.putPdf(visibleName, bytes, { parent: folderId, tags }),
-    );
+    log(`uploadPdf: page count unknown for "${visibleName}", one-page list`);
+    return ref;
   }
-  const id = uuid4();
   const pages = Array.from({ length: pageCount }, () => uuid4());
-  return withGenerationRetry(() =>
-    putPdfWithPages(
-      api,
-      id,
-      visibleName,
-      bytes,
-      folderId,
-      tags,
-      pages,
-      pageTags,
-    ),
-  );
-}
-
-async function putPdfWithPages(
-  api: RemarkableApi,
-  id: string,
-  visibleName: string,
-  bytes: Uint8Array,
-  parent: string,
-  tags: string[],
-  pages: string[],
-  pageTags: Record<string, string[]>,
-): Promise<SimpleEntry> {
-  const raw = api.raw;
   const now = Date.now();
-  const metadata: Metadata = {
-    parent,
-    pinned: false,
-    lastModified: String(now),
-    createdTime: String(now),
-    type: "DocumentType",
-    visibleName,
-    lastOpened: "0",
-    lastOpenedPage: 0,
-  } as Metadata;
-  // Mirrors rmapi-js's putPdf defaults, with the real page list.
-  const content = {
-    coverPageNumber: -1,
-    documentMetadata: {},
-    extraMetadata: {},
-    lineHeight: -1,
-    margins: 125,
-    orientation: "portrait",
-    fileType: "pdf",
-    formatVersion: 1,
-    tags: tags.map((name) => ({ name, timestamp: now })),
-    fontName: "",
-    textAlignment: "justify",
-    textScale: 1,
-    zoomMode: "bestFit",
+  const updated = await api.updateDocument(ref, {
     originalPageCount: pages.length,
     pageCount: pages.length,
+    pages,
+    redirectionPageMap: pages.map((_, i) => i),
     pageTags: Object.entries(pageTags).flatMap(([idx, names]) => {
       const pageId = pages[Number(idx)];
       return pageId
         ? names.map((name) => ({ name, pageId, timestamp: now }))
         : [];
     }),
-    pages,
-    redirectionPageMap: pages.map((_, i) => i),
-    sizeInBytes: String(bytes.length),
-  } as unknown as DocumentContent;
+  } as Partial<DocumentContent>);
+  log(`uploadPdf: "${visibleName}" -> ${ref.id} (${pages.length} page(s))`);
+  return updated;
+}
 
-  const [
-    [contentEntry, uploadContent],
-    [metadataEntry, uploadMetadata],
-    [pagedataEntry, uploadPagedata],
-    [fileEntry, uploadFile],
-    [rootHash, generation, schema],
-  ] = await Promise.all([
-    raw.putContent(`${id}.content`, content),
-    raw.putMetadata(`${id}.metadata`, metadata),
-    raw.putText(`${id}.pagedata`, "\n"),
-    raw.putFile(`${id}.pdf`, bytes),
-    raw.getRootHash(),
-  ]);
-  const [[docEntry, uploadDoc], { entries: rootEntries }] = await Promise.all([
-    raw.putEntries(
-      id,
-      [contentEntry, metadataEntry, pagedataEntry, fileEntry],
-      schema,
-    ),
-    raw.getEntries("root.docSchema", rootHash),
-  ]);
-  rootEntries.push(docEntry);
-  const [rootEntry, uploadRoot] = await raw.putEntries(
-    "root",
-    rootEntries,
-    schema,
+/**
+ * Replace the `.rm` files of some pages of a document in one commit. Fails with
+ * rmapi-js's HashNotFoundError if the document changed since `ref` was read,
+ * so pages computed from an older version never overwrite newer ink.
+ */
+export async function putPages(
+  api: RemarkableApi,
+  ref: ItemRef,
+  pages: Map<string, Uint8Array>,
+): Promise<ItemRef> {
+  if (pages.size === 0) return ref;
+  const scenes = new Map(
+    [...pages].map(([pageId, bytes]) => [pageId, parseRmScene(bytes)]),
   );
-  await Promise.all([
-    uploadContent,
-    uploadMetadata,
-    uploadPagedata,
-    uploadFile,
-    uploadDoc,
-    uploadRoot,
-  ]);
-  await raw.putRootHash(rootEntry.hash, generation);
-  log(`uploadPdf: "${visibleName}" -> ${id} (${pages.length} page(s))`);
-  return { id, hash: docEntry.hash };
+  return api.putRmPages(ref, scenes);
 }
 
 /** Look up an entry by its document id (uuid). */
@@ -269,15 +166,15 @@ export async function findById(
 /** Move a document to the reMarkable trash (recoverable on the device). */
 export async function trashDoc(
   api: RemarkableApi,
-  hash: string,
+  ref: ItemRef,
 ): Promise<void> {
-  await withGenerationRetry(() => api.move(hash, "trash"));
+  await api.move(ref, "trash"); // rmapi-js retries generation conflicts
 }
 
-/** Delete a document by its current hash. */
-export async function deleteDoc(
+/** Permanently delete a document (not recoverable from the device trash). */
+export async function purgeDoc(
   api: RemarkableApi,
-  hash: string,
+  ref: ItemRef,
 ): Promise<void> {
-  await withGenerationRetry(() => api.delete(hash));
+  await api.purge(ref);
 }
