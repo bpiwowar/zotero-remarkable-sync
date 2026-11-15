@@ -15,6 +15,8 @@ export interface PageRef {
 export interface RmDocPage {
   /** 0-based PDF page index this annotation layer belongs to */
   pdfPageIndex: number;
+  /** reMarkable page uuid */
+  pageUuid: string;
   /** parsed strokes + highlights */
   page: RmPage;
 }
@@ -139,7 +141,7 @@ export async function fetchAnnotations(
 
     const mapped = redirect?.[i];
     const pdfPageIndex = typeof mapped === "number" && mapped >= 0 ? mapped : i;
-    pages.push({ pdfPageIndex, page: parsed });
+    pages.push({ pdfPageIndex, pageUuid: pageIds[i], page: parsed });
   }
 
   return { pages, pageTags: pageTagsOf(content, pageIds), content };

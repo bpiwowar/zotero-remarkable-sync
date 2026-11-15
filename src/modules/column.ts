@@ -52,6 +52,17 @@ function stateOf(item: Zotero.Item): SyncState {
         break;
       }
     }
+    // A pulled annotation deleted in Zotero is still on the device until the
+    // next push.
+    if (!dirty) {
+      for (const key of Object.keys(rec.annotationSources ?? {})) {
+        const it = Zotero.Items.getByLibraryAndKey(att.libraryID, key);
+        if (!it || (it as Zotero.Item).deleted) {
+          dirty = true;
+          break;
+        }
+      }
+    }
     // A previously-pushed annotation that no longer exists was deleted in Zotero
     // but still lives on the device until the next push.
     if (!dirty) {

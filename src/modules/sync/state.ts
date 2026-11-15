@@ -22,6 +22,9 @@ export interface SyncRecord {
   /** content signature of each annotationKeys entry, so a pulled annotation
    *  later deleted in Zotero can be added to deletedSigs */
   annotationSigs?: Record<string, string>;
+  /** device items each annotationKeys entry was built from, so deleting the
+   *  annotation in Zotero can delete them on the device */
+  annotationSources?: Record<string, PulledSource>;
   /** keys of Zotero annotations already pushed to the device (avoid re-push) */
   pushedKeys?: string[];
   /** Zotero annotations pushed to the device + the reMarkable item ids assigned,
@@ -32,6 +35,13 @@ export interface SyncRecord {
   /** device page tags at the last pull, by PDF page index — the baseline to
    *  tell a tag removed in Zotero from one added on the device */
   pageTags?: Record<string, string[]>;
+}
+
+export interface PulledSource {
+  /** reMarkable page uuid */
+  page: string;
+  /** scene item ids ([part1, part2] each) */
+  ids: [number, number][];
 }
 
 export interface PushedItem {

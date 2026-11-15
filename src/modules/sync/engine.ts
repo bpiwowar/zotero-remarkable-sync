@@ -437,6 +437,7 @@ export async function pullAll(
         lastPulledVersion: entry.hash,
         annotationKeys: result.keys,
         annotationSigs: sigsOf(result.keys, libraryID),
+        annotationSources: result.sources,
         deletedSigs,
         pageTags: Object.fromEntries(
           pageTags.map((t) => [String(t.pdfPageIndex), t.names]),

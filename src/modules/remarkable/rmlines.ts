@@ -39,6 +39,8 @@ export interface RmStroke {
   pointWidth: number;
   isHighlighter: boolean;
   points: RmPoint[];
+  /** scene item id(s) on the page (set by parseRmPage) */
+  ids?: CrdtId[];
 }
 
 export interface RmRect {
@@ -53,6 +55,8 @@ export interface RmHighlight {
   colorIndex: number;
   rgba?: [number, number, number, number];
   rects: RmRect[];
+  /** scene item id(s) on the page (set by parseRmPage; several once merged) */
+  ids?: CrdtId[];
 }
 
 export interface CrdtId {
@@ -381,9 +385,11 @@ export function parseRmPage(bytes: Uint8Array): RmPage {
           r.u8(); // item_type
           if (blockType === BLOCK_LINE) {
             const stroke = parseLine(r, currentVersion);
+            stroke.ids = [hdr.item];
             if (stroke.points.length) strokes.push(stroke);
           } else {
             const hl = parseGlyph(r);
+            hl.ids = [hdr.item];
             if (hl.rects.length) highlights.push(hl);
           }
           r.position = end;

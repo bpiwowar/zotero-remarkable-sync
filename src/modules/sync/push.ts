@@ -176,6 +176,28 @@ async function pushPageTagRemovals(
   return count;
 }
 
+/**
+ * Pulled annotations the user deleted in Zotero, with the device item ids to
+ * remove ("part1,part2") grouped by reMarkable page uuid.
+ */
+function deletedPulled(
+  rec: SyncRecord,
+  libraryID: number,
+): { keys: string[]; byPage: Map<string, string[]> } {
+  const keys: string[] = [];
+  const byPage = new Map<string, string[]>();
+  for (const key of rec.annotationKeys ?? []) {
+    const src = rec.annotationSources?.[key];
+    if (!src) continue;
+    const item = Zotero.Items.getByLibraryAndKey(libraryID, key);
+    if (item && !(item as Zotero.Item).deleted) continue;
+    keys.push(key);
+    const ids = byPage.get(src.page) ?? byPage.set(src.page, []).get(src.page)!;
+    for (const [p1, p2] of src.ids) ids.push(`${p1},${p2}`);
+  }
+  return { keys, byPage };
+}
+
 interface Template {
   structure: Uint8Array;
   layerId: CrdtId;
@@ -263,12 +285,17 @@ export async function pushAnnotations(
 
       const pulled = new Set(rec.annotationKeys ?? []);
       const tracked = rec.pushedItems ?? [];
+      const unpulled = deletedPulled(rec, libraryID);
 
       // Zotero-origin annotations we manage (current set).
       const managed = (att as Zotero.Item)
         .getAnnotations()
         .filter((a) => PUSHABLE.has(a.annotationType) && !pulled.has(a.key));
-      if (managed.length === 0 && tracked.length === 0) {
+      if (
+        managed.length === 0 &&
+        tracked.length === 0 &&
+        unpulled.byPage.size === 0
+      ) {
         done++;
         continue;
       }
@@ -338,6 +365,7 @@ export async function pushAnnotations(
       const pageUuids = new Set<string>([
         ...managedByPage.keys(),
         ...trackedByPage.keys(),
+        ...unpulled.byPage.keys(),
       ]);
 
       let template: Template | null | undefined;
@@ -363,7 +391,8 @@ export async function pushAnnotations(
             const was = here.revs.get(a.key);
             return !was || pushFingerprint(a) === was;
           });
-        if (sameSet) continue;
+        const deletedHere = unpulled.byPage.get(pageUuid) ?? [];
+        if (sameSet && deletedHere.length === 0) continue;
 
         const found = findRef(pageUuid);
         const size = pageSizeAt(sizes, found ? found.pdfIdx : 0);
@@ -392,9 +421,10 @@ export async function pushAnnotations(
           );
           const parsed = parseRmPage(existing);
           if (!parsed.layerId) continue;
-          const removeIds = new Set(
-            here.ids.map((id) => `${id.part1},${id.part2}`),
-          );
+          const removeIds = new Set([
+            ...here.ids.map((id) => `${id.part1},${id.part2}`),
+            ...deletedHere,
+          ]);
           ({ bytes, ids } = rebuildPage(
             existing,
             strokes,
@@ -459,8 +489,27 @@ export async function pushAnnotations(
       if (pageRm.size > 0) {
         log(`push: "${rec.visibleName}" -> ${pageRm.size} page(s) rewritten`);
         await updateDocumentPages(api, rec.docId, pageRm);
+        // Pulled annotations deleted on rewritten pages are gone from the
+        // device too: stop tracking them.
+        const gone = new Set(
+          unpulled.keys.filter((k) =>
+            rewritten.has(rec.annotationSources![k].page),
+          ),
+        );
+        if (gone.size) {
+          log(
+            `push: "${rec.visibleName}" removed ${gone.size} annotation(s) ` +
+              `deleted in Zotero from the device`,
+          );
+        }
+        const drop = <T>(m: Record<string, T> | undefined) =>
+          m &&
+          Object.fromEntries(Object.entries(m).filter(([k]) => !gone.has(k)));
         await setRecord(attKey, {
           ...rec,
+          annotationKeys: rec.annotationKeys?.filter((k) => !gone.has(k)),
+          annotationSigs: drop(rec.annotationSigs),
+          annotationSources: drop(rec.annotationSources),
           pushedItems: newTracked,
           pushedKeys: newTracked.map((p) => p.key),
         });

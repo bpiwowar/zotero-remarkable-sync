@@ -18,6 +18,7 @@ import type { RmDocPage, RmPageTags } from "../remarkable/rmdoc";
 import type { RmHighlight, RmStroke } from "../remarkable/rmlines";
 import { rmToZoteroHex } from "../remarkable/colors";
 import { log, errMsg } from "../../utils/log";
+import type { PulledSource } from "./state";
 
 // Zotero object-key charset (excludes 0/1/I/O).
 const KEY_CHARS = "23456789ABCDEFGHIJKLMNPQRSTUVWXYZ";
@@ -60,9 +61,10 @@ function mergeHighlights(hls: RmHighlight[]): RmHighlight[] {
     const adjacent = !!last && gap > -last.h * 0.5 && gap < last.h * 0.8;
     if (prev && sameColor && adjacent) {
       prev.rects.push(...hl.rects);
+      prev.ids = [...(prev.ids ?? []), ...(hl.ids ?? [])];
       if (hl.text) prev.text = prev.text ? `${prev.text} ${hl.text}` : hl.text;
     } else {
-      out.push({ ...hl, rects: [...hl.rects] });
+      out.push({ ...hl, rects: [...hl.rects], ids: [...(hl.ids ?? [])] });
     }
   }
   return out;
@@ -273,6 +275,17 @@ function findReplacement(
 interface Pending {
   signature: string;
   json: Record<string, unknown>;
+  /** device items this annotation is built from */
+  source?: PulledSource;
+}
+
+function sourceOf(
+  page: string,
+  ids: { part1: number; part2: number }[] | undefined,
+): PulledSource | undefined {
+  return ids?.length
+    ? { page, ids: ids.map((i) => [i.part1, i.part2]) }
+    : undefined;
 }
 
 function buildHighlight(
@@ -444,6 +457,8 @@ export interface ApplyResult {
   removed: number;
   /** pulled annotations with user edits updated in place to match the device */
   updated: number;
+  /** device items each key was built from (when known) */
+  sources: Record<string, PulledSource>;
 }
 
 /**
@@ -474,16 +489,23 @@ export async function applyAnnotations(
     pendings.push(p);
     incoming.add(p.signature);
   }
-  for (const { pdfPageIndex, page } of docPages) {
+  for (const { pdfPageIndex, pageUuid, page } of docPages) {
     const size = pageSizeAt(sizes, pdfPageIndex);
+    const withSource = (p: Pending | null, ids?: RmHighlight["ids"]) => {
+      if (p) p.source = sourceOf(pageUuid, ids);
+      return p;
+    };
     const built = [
       ...mergeHighlights(page.highlights).map((hl) =>
-        buildHighlight(pdfPageIndex, hl, size),
+        withSource(buildHighlight(pdfPageIndex, hl, size), hl.ids),
       ),
       ...page.strokes.map((st) =>
-        st.isHighlighter
-          ? buildHighlighterStroke(pdfPageIndex, st, size)
-          : buildInk(pdfPageIndex, st, size),
+        withSource(
+          st.isHighlighter
+            ? buildHighlighterStroke(pdfPageIndex, st, size)
+            : buildInk(pdfPageIndex, st, size),
+          st.ids,
+        ),
       ),
     ];
     for (const p of built) {
@@ -495,6 +517,11 @@ export async function applyAnnotations(
   }
 
   const ourSet = new Set(ourKeys);
+  const bySig = new Map(pendings.map((p) => [p.signature, p]));
+  const sources: Record<string, PulledSource> = {};
+  const track = (key: string, p: Pending | undefined) => {
+    if (p?.source) sources[key] = p.source;
+  };
   const present = new Set<string>();
   const keptKeys: string[] = [];
   const edited: Zotero.Item[] = [];
@@ -506,6 +533,7 @@ export async function applyAnnotations(
     if (ourSet.has(a.key)) {
       if (s && incoming.has(s)) {
         keptKeys.push(a.key);
+        track(a.key, bySig.get(s));
         present.add(s);
       } else if (isUserEdited(a)) {
         edited.push(a); // never lose the user's comment/tags — resolved below
@@ -541,6 +569,7 @@ export async function applyAnnotations(
         consumed.add(p);
         present.add(p.signature);
         keptKeys.push(a.key);
+        track(a.key, p);
         updated++;
         continue;
       }
@@ -558,6 +587,7 @@ export async function applyAnnotations(
     if (key) {
       present.add(p.signature);
       newKeys.push(key);
+      track(key, p);
     }
   }
 
@@ -566,5 +596,6 @@ export async function applyAnnotations(
     added: newKeys.length,
     removed,
     updated,
+    sources,
   };
 }
