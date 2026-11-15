@@ -63,6 +63,8 @@ export interface RmPage {
   maxAuthor: number;
   /** highest part2 counter seen (mint new counters above this) */
   maxCounter: number;
+  /** the page's author table (author id -> uuid) */
+  authors: Map<number, string>;
 }
 
 const HIGHLIGHTER_TOOLS = new Set([5, 18]); // HIGHLIGHTER_1, HIGHLIGHTER_2
@@ -107,8 +109,17 @@ export function parseRmPage(bytes: Uint8Array): RmPage {
   let lastItemId: CrdtId | undefined;
   let maxAuthor = 0;
   let maxCounter = 0;
+  const authors = new Map<number, string>();
 
   for (const block of parseRmScene(bytes).blocks) {
+    if (block.type === "authorIds") {
+      for (const [id, uuid] of block.authors) authors.set(id, uuid);
+      continue;
+    }
+    if ("item" in block && block.item?.itemId) {
+      // Every scene item (tombstones and groups included) uses up a counter.
+      maxCounter = Math.max(maxCounter, block.item.itemId.counter);
+    }
     if (block.type !== "sceneLineItem" && block.type !== "sceneGlyphItem") {
       continue;
     }
@@ -150,5 +161,14 @@ export function parseRmPage(bytes: Uint8Array): RmPage {
     }
   }
 
-  return { strokes, highlights, layerId, lastItemId, maxAuthor, maxCounter };
+  for (const id of authors.keys()) maxAuthor = Math.max(maxAuthor, id);
+  return {
+    strokes,
+    highlights,
+    layerId,
+    lastItemId,
+    maxAuthor,
+    maxCounter,
+    authors,
+  };
 }

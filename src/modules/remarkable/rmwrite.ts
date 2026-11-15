@@ -40,6 +40,8 @@ export interface RmStructure {
   author: number;
   /** first counter to use for new item ids */
   startCounter: number;
+  /** the template's author table (author id -> uuid) */
+  authors: Map<number, string>;
 }
 
 export interface PageUpdateMeta {
@@ -47,8 +49,13 @@ export interface PageUpdateMeta {
   lastItemId?: CrdtId;
   /** an author id already registered in the page (reuse, don't invent) */
   author: number;
-  /** first counter to use — must be above every existing part2 */
+  /** first counter to use — must be above every existing part2 (the tablet
+   *  drops items whose counter is not) */
   startCounter: number;
+  /** author of each added item (highlights, then strokes); `author` if unset */
+  authors?: number[];
+  /** authors to add to the page's author table (id -> uuid) */
+  register?: Map<number, string>;
 }
 
 /**
@@ -135,6 +142,7 @@ export function blankStructure(author = 1): RmStructure {
     layerId: { part1: 0, part2: 11 },
     author,
     startCounter: 20,
+    authors: new Map([[author, AUTHOR_UUID]]),
   };
 }
 
@@ -161,12 +169,26 @@ export function rebuildPage(
       ),
   );
 
+  if (meta.register?.size) {
+    let table = blocks.find((b) => b.type === "authorIds");
+    if (!table) {
+      table = { type: "authorIds", authors: new Map(), ...common(1, 1) };
+      blocks.unshift(table);
+    }
+    const authors = new Map(
+      (table as Extract<RmBlock, { type: "authorIds" }>).authors,
+    );
+    for (const [a, uuid] of meta.register) authors.set(a, uuid);
+    (table as any).authors = authors;
+  }
+
   const parentId = toSceneId(meta.layerId);
   let left = meta.lastItemId ? toSceneId(meta.lastItemId) : END;
   let counter = meta.startCounter;
   const ids: CrdtId[] = [];
   const nextItem = () => {
-    const itemId = id(meta.author, counter++);
+    const author = meta.authors?.[ids.length] ?? meta.author;
+    const itemId = id(author, counter++);
     const item = { itemId, leftId: left, rightId: END, deletedLength: 0 };
     ids.push({ part1: itemId.authorId, part2: itemId.counter });
     left = itemId;

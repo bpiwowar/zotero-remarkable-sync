@@ -15,7 +15,7 @@
 A [Zotero](https://www.zotero.org/) plugin (Zotero 8 to 10) that keeps your
 PDFs **and annotations** in sync with a [reMarkable](https://remarkable.com/) tablet.
 
-- **Tag-driven** — items tagged `@remarkable` (configurable) are pushed to the device.
+- **Tag-driven** — PDF attachments tagged `@remarkable` (configurable) are pushed to the device.
 - **Bidirectional** — PDFs go up; highlights and ink strokes made on the device come
   back as **native Zotero annotations**.
 - **On demand or scheduled** — sync from a context menu / button, or on a timer.
@@ -59,14 +59,15 @@ device token is stored in Zotero preferences.
 
 - **Connect**: Settings → _Zotero reMarkable Sync_ → paste a one-time code from
   <https://my.remarkable.com/device/browser/connect>.
-- **Sync**: tag an item `@remarkable` (right-click → _reMarkable: Add to sync_),
-  then the toolbar **Sync now** button (or set an interval in preferences).
+- **Sync**: right-click a paper → _reMarkable: Add to sync_ (this tags its best
+  PDF `@remarkable`; right-click a PDF row to pick another one), then the toolbar
+  **Sync now** button (or set an interval in preferences).
 - **Tools → reMarkable**: _Sync now_, _Force re-pull annotations_, _Remove pulled
   annotations_ (removes only plugin-created annotations), _Clean up device
   folder…_ (see below).
 - **Cleanup**: _Clean up device folder…_ lists documents in the reMarkable sync
-  folder that are not linked to an item tagged for sync, and asks for each one:
-  **Ignore** (default), **Relink** (when a Zotero item matches — tags it and
+  folder that are not linked to a PDF tagged for sync, and asks for each one:
+  **Ignore** (default), **Relink** (when a Zotero PDF matches — tags it and
   links it without re-uploading) or **Move to trash** (recoverable on the
   device). Nothing changes until a final confirmation. Sub-folders are left
   alone.

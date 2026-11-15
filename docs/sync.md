@@ -32,16 +32,21 @@ reopened on it.
 
 ## What is synced
 
-- **Items:** regular Zotero items carrying the sync tag (`@remarkable` by
-  default, pref `syncTag`), in every editable library
-  ([`findSyncItems`](../src/modules/sync/engine.ts#L107)). Each PDF attachment
-  of such an item becomes one reMarkable document in the configured folder
-  (pref `folder`).
+- **PDFs:** PDF attachments carrying the sync tag (`@remarkable` by default,
+  pref `syncTag`), in every editable library
+  ([`findSyncedPdfs`](../src/modules/sync/engine.ts)). Each becomes one
+  reMarkable document in the configured folder (pref `folder`). A paper counts
+  as synced when one of its PDFs is.
+  - _Add to sync_ on a paper tags its best PDF (Zotero's choice), so a paper
+    with several PDFs gives one document. On a PDF row, it tags that PDF.
+  - Versions up to 0.3 tagged the paper. The first sync moves that tag to the
+    PDFs already synced, or to the best PDF
+    ([`migrateItemTags`](../src/modules/sync/engine.ts)).
 - **The state:** the link between an attachment and its document is a
-  `SyncRecord` ([`state.ts`](../src/modules/sync/state.ts#L5)), stored in
-  `<Zotero data dir>/remarkablesync/state.json` and keyed by the attachment key.
-  It holds the document id and hash, the PDF's SHA-256, and the bookkeeping
-  described below.
+  `SyncRecord` ([`state.ts`](../src/modules/sync/state.ts)), keyed by the
+  attachment key. It holds the document id and hash, the PDF's SHA-256, and the
+  bookkeeping described below. See [Several computers](#several-computers) for
+  where it is stored.
 
 ## Modes and settings
 
@@ -67,18 +72,101 @@ push gets an explicit attachment list, and the annotation push and pull get
 `onlyKeys`. If the first attempt fails (usually a stale session), `runSyncNow`
 re-authenticates and retries once.
 
+## Several computers
+
+Several computers can sync the same Zotero library with the same reMarkable
+account. Three mechanisms make this work.
+
+### The shared sync note
+
+Each synced PDF attachment keeps its record in its own note (the attachment's
+note field, shown when the attachment is selected), under a **reMarkable sync**
+heading and a "Do not edit below this line" warning. Zotero sync carries it to
+the other computers, so they all share the records.
+
+- **Your text is kept:** text before or after the block stays where it is. The
+  plugin replaces its own block in place
+  ([`noteWith`](../src/modules/sync/state.ts)), and empties the note only when
+  nothing of yours is left. (Zotero 8 shows attachment notes read-only, so such
+  text comes from an older Zotero or from another tool.)
+- **"Migrate to Item Note":** Zotero offers this on any non-empty attachment
+  note. It moves the whole note, our block included, into a new note related to
+  the attachment, and empties the attachment's note. The block names its
+  attachment, so the next sync run puts it back into the attachment's note and
+  removes it from the new note: the new note keeps your text, or is erased if
+  nothing else is left
+  ([`reclaimFromNotes`](../src/modules/sync/state.ts)).
+- **Hidden from search:** Zotero's quick search ("All Fields & Tags",
+  "Everything") matches note text. The record is therefore deflated and written
+  as Braille characters, one per byte (U+2800–U+28FF): no typed query matches
+  it. Only the heading words match.
+- **Authoritative:** the notes are the state. `<Zotero data dir>/remarkablesync/state.json`
+  is only a local, readable cache, so the status column can read records
+  synchronously.
+- **Reloaded every run:** a sync run starts with a Zotero sync, then reloads
+  every note ([`beginRun`](../src/modules/sync/engine.ts)), and ends with
+  another Zotero sync ([`endRun`](../src/modules/sync/engine.ts)). This narrows
+  the window in which a computer works from an outdated note. Without Zotero
+  sync set up, both steps only reload the notes.
+- **Written only on change:** a note is rewritten only when its record changes.
+- **Deleting the block** makes the plugin forget the link. The next sync finds
+  the document again by its PDF hash (below).
+- **Migration:** a `state.json` from before the notes (v0.3 and earlier) is
+  moved into the notes once, at startup.
+
+Zotero does not merge note text. If two computers change the same attachment's
+note between two Zotero syncs, Zotero shows its conflict window and keeps the version
+you choose. The next two mechanisms keep the outcome safe whichever is chosen.
+
+### Relinking by PDF hash
+
+The cloud names each file by the SHA-256 of its bytes, the same hash as the
+record's `fileHash`. When a tagged PDF has no record, the PDF push looks for a
+document in the sync folder, not linked to any record, whose PDF has that hash
+([`unlinkedByPdfHash`](../src/modules/sync/engine.ts)). It links to that
+document instead of uploading a duplicate. The record is marked `adopted`: the
+annotation push skips it until a pull has run, so the annotations another
+computer pulled are recognised by their signature first.
+
+### Pushed annotations carry their Zotero key
+
+Each annotation pushed from Zotero is written under its own author on the page.
+The author's uuid encodes the annotation key
+([`zkey.ts`](../src/modules/remarkable/zkey.ts)): `7a6f7472-656d-8000-8000-`
+followed by the key as a base-33 number. Any computer reads it from the page
+itself:
+
+- **The pull ignores these items:** they mirror a Zotero annotation, so they
+  are never imported, whichever computer pushed them
+  ([`withoutZoteroItems`](../src/modules/sync/engine.ts)).
+- **The push replaces them:** when rewriting an annotation, every item under its
+  author is removed first, including items another computer wrote. Items under
+  another author that are exact copies of what is written (same shape, colour
+  and text) are removed too: leftovers of a push whose tracking was lost.
+
+The tablet keeps these author entries when it saves the page, and an erased
+item keeps its author id. New items must use counters above every counter on
+the page: the tablet drops the others when it loads the page. A page holds at
+most 255 authors. Past that, annotations are written under the page's own
+author, as before.
+
+Annotations pushed by earlier versions sit under the tablet's author. The next
+push rewrites them once under their own author.
+
 ## Phase 1: PDF push
 
 [`pushAll`](../src/modules/sync/engine.ts#L184) handles each attachment as
 follows:
 
-- **No record:** the PDF is uploaded and a record is created.
+- **No record:** if the sync folder holds an unlinked document with the same
+  PDF hash, the attachment is linked to it
+  ([relinking](#relinking-by-pdf-hash)). Otherwise the PDF is uploaded and a
+  record is created.
 - **Record exists, same file hash, document still on the device:** the item is
   skipped.
 - **Document deleted on the reMarkable:** the plugin respects that. It
   [`stopSync`](../src/modules/sync/engine.ts#L77)s the attachment: the record is
-  dropped and the sync tag is removed from the item, unless another of its PDFs
-  is still synced. Nothing is uploaded again.
+  dropped and the sync tag is removed from the PDF. Nothing is uploaded again.
 - **In the Zotero trash:** skipped (in every phase) until restored.
 - **File changed in Zotero, or a forced overwrite:** the document is replaced.
   1. For a changed file, the old document is pulled first, so annotations made
@@ -275,7 +363,7 @@ signatures, the document hash as `lastPulledVersion`, the updated
 
 | Action                                             | Where                   | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | -------------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add to sync                                        | context menu, item pane | Adds the sync tag ([`addToSync`](../src/modules/sync/engine.ts#L561)). Nothing is uploaded until the next sync.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Add to sync                                        | context menu, item pane | Tags the best PDF of each selected paper, or each selected PDF ([`addToSync`](../src/modules/sync/engine.ts)). Nothing is uploaded until the next sync.                                                                                                                                                                                                                                                                                                                                                               |
 | Remove from sync                                   | context menu, item pane | Dialog ([`askUnsync`](../src/modules/ui.ts#L331)): **Delete** or **Keep** the reMarkable copy, plus "pull first" (default on). **Delete** then asks: **Move to trash** (default, recoverable from the tablet) or **Delete permanently** (purge). [`removeFromSync`](../src/modules/sync/engine.ts#L576) does a final pull if asked; if that pull fails, the documents are kept on the device. It then removes the tag and record, and deletes the document if chosen. Not connected: only the Zotero side is changed. |
 | Overwrite device from Zotero                       | context menu            | Forced replacement of the selection's documents, without a final pull ("Zotero wins"), plus annotation push ([`runOverwriteFromZotero`](../src/modules/ui.ts#L256)). The old copies go to the reMarkable trash. Blocked in safe mode.                                                                                                                                                                                                                                                                                 |
 | Overwrite Zotero from reMarkable                   | context menu            | Resets the pull state ([`resetPullState`](../src/modules/sync/engine.ts#L504)), then a forced pull for the selection ([`runOverwriteFromRemarkable`](../src/modules/ui.ts#L291)).                                                                                                                                                                                                                                                                                                                                     |
@@ -289,9 +377,9 @@ signatures, the document hash as `lastPulledVersion`, the updated
 ## Status dot
 
 The item-tree column ([`stateOf`](../src/modules/column.ts#L25)) shows the
-state of each synced item:
+state of each synced paper (over its PDFs) and of each synced PDF row:
 
-- **○ (tagged, never synced):** the item has the sync tag but no record yet.
+- **○ (tagged, never synced):** the PDF has the sync tag but no record yet.
 - **◆ (changed):** a Zotero annotation hasn't been pushed, was edited since it
   was pushed, or was deleted since.
 - **● green (synced recently) / ● grey (synced a while ago):** nothing pending.
@@ -301,9 +389,13 @@ state of each synced item:
 - **Annotations pulled before v0.3.1 have no recorded source.** Deleting one
   in Zotero only keeps it from coming back; a forced re-pull (_Force re-pull
   annotations_) records the sources.
-- **Records are per computer.** The sync state lives in the local Zotero data
-  directory and is not shared through Zotero sync, so using the plugin on
-  several computers with the same reMarkable account is not supported yet.
+- **Concurrent edits of a sync note.** Two computers syncing the same PDF
+  between two Zotero syncs make Zotero ask which note version to keep. The
+  other version's bookkeeping is lost; relinking and keyed authors limit the
+  effect to, at worst, a pulled annotation created twice.
+- **Safe-mode deletions.** A pulled annotation deleted in Zotero is kept from
+  coming back by its signature in the shared note. If that note version is
+  lost in a conflict, the next pull may create it again.
 - **Page tags go to Zotero only, except removals.** Tags added in Zotero are
   not sent to the tablet, and document-level tags are not synced.
 - **Commas in tag names aren't supported.** The note's comment is

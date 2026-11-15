@@ -74,3 +74,18 @@ unsync-delete-how = Move the reMarkable { $count ->
 } to the reMarkable trash (recoverable from the tablet), or delete permanently?
 unsync-btn-trash = Move to trash
 unsync-btn-purge = Delete permanently
+
+pane-no-pdf = This item has no PDF attachment.
+pane-add = Add to sync
+pane-remove = Remove
+pane-sync = Sync
+pane-state-fresh = Synced { $when }
+pane-state-stale = Synced { $when }
+pane-state-changed = Zotero changes not yet sent to the reMarkable
+pane-state-never = Uploaded at the next sync
+pane-state-off = Not synced
+pane-legend = Status icons (also shown in the item list)
+status-fresh = Synced in the last 24 hours
+status-stale = Synced more than 24 hours ago
+status-changed = Changes in Zotero waiting to be sent
+status-never = Tagged, waiting for its first sync

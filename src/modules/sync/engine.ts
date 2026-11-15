@@ -13,8 +13,13 @@ import {
   setRecord,
   removeRecord,
   allRecords,
+  refreshShared,
+  markSynced,
   type SyncRecord,
 } from "./state";
+import type { ItemRef, RemarkableApi } from "rmapi-js";
+import type { RmDocPage } from "../remarkable/rmdoc";
+import { keyedAuthors } from "../remarkable/zkey";
 import { applyAnnotations, existingSig } from "./annotations";
 
 const IO = globalThis as any;
@@ -34,8 +39,43 @@ export function getSyncTag(): string {
   return (getPref("syncTag") || "@remarkable").toString();
 }
 
+/**
+ * A PDF attachment is synced when it carries the sync tag; a regular item,
+ * when one of its PDFs does.
+ */
 export function isItemSynced(item: Zotero.Item): boolean {
-  return item.hasTag(getSyncTag());
+  if (item.isRegularItem()) return syncedPdfsOf([item]).length > 0;
+  return item.isPDFAttachment() && item.hasTag(getSyncTag());
+}
+
+/** The PDF attachments of the given items (a PDF counts as its own). */
+function pdfsOf(items: Zotero.Item[]): Zotero.Item[] {
+  const out = new Map<number, Zotero.Item>();
+  for (const item of items) {
+    if (item.isPDFAttachment()) out.set(item.id, item);
+    else if (item.isRegularItem())
+      for (const att of Zotero.Items.get(item.getAttachments()))
+        if (att.isPDFAttachment()) out.set(att.id, att);
+  }
+  return [...out.values()];
+}
+
+/** The synced (tagged) PDFs among the given items and their attachments. */
+export function syncedPdfsOf(items: Zotero.Item[]): Zotero.Item[] {
+  const tag = getSyncTag();
+  return pdfsOf(items).filter((att) => att.hasTag(tag));
+}
+
+/** The PDF to sync for a regular item: Zotero's best attachment if a PDF. */
+async function bestPdfOf(item: Zotero.Item): Promise<Zotero.Item | null> {
+  try {
+    const best = await item.getBestAttachments();
+    const pdf = best.find((a) => a.isPDFAttachment());
+    if (pdf) return pdf;
+  } catch {
+    /* fall back below */
+  }
+  return pdfsOf([item])[0] ?? null;
 }
 
 /**
@@ -62,6 +102,33 @@ export async function pdfPageCount(att: Zotero.Item): Promise<number | null> {
 }
 
 /**
+ * Run a Zotero sync (when the user has one set up), so the shared sync notes
+ * are up to date before a reMarkable sync, and its changes reach the other
+ * computers right after. Queues behind a Zotero sync already running.
+ */
+export async function syncZotero(): Promise<void> {
+  const runner = (Zotero as any).Sync?.Runner;
+  if (!runner?.enabled) return;
+  try {
+    await runner.sync({ background: true });
+  } catch (e) {
+    log(`Zotero sync failed: ${errMsg(e)}`);
+  }
+}
+
+/** Start a reMarkable sync run: sync Zotero, then reload the shared state. */
+export async function beginRun(progress?: ProgressFn): Promise<void> {
+  progress?.("Syncing Zotero…", 0);
+  await syncZotero();
+  await refreshShared();
+}
+
+/** End a reMarkable sync run: send the state changes through Zotero sync. */
+export async function endRun(): Promise<void> {
+  await syncZotero();
+}
+
+/**
  * Safe mode (default on): never modify annotations on the device — pull only.
  * PDFs are still uploaded, since storing a document is non-destructive.
  */
@@ -69,60 +136,67 @@ export function isSafeMode(): boolean {
   return getPref("safeMode") !== false;
 }
 
+/** Remove the sync tag from an item, if it has it. */
+async function untag(item: Zotero.Item): Promise<void> {
+  const tag = getSyncTag();
+  if (item.hasTag(tag)) {
+    item.removeTag(tag);
+    await item.saveTx();
+  }
+}
+
 /**
- * Stop syncing an attachment: drop its sync record and remove the sync tag from
- * its parent item (so it is excluded from future syncs). Touches only Zotero —
- * never the device. Used when a document was deleted on the reMarkable.
+ * Stop syncing an attachment: drop its sync record and its sync tag (so it is
+ * excluded from future syncs). Touches only Zotero — never the device. Used
+ * when a document was deleted on the reMarkable.
  */
 async function stopSync(att: Zotero.Item): Promise<void> {
   await removeRecord(att.key);
-  const parent = att.parentItem;
+  await untag(att);
+}
+
+/** Items carrying the sync tag in every editable library. */
+async function taggedItems(): Promise<Zotero.Item[]> {
+  const out: Zotero.Item[] = [];
+  for (const lib of Zotero.Libraries.getAll().filter((l) => l.editable)) {
+    const search = new Zotero.Search();
+    // `libraryID` is typed read-only but is assignable on a fresh search.
+    (search as any).libraryID = lib.libraryID;
+    search.addCondition("tag", "is", getSyncTag());
+    out.push(...Zotero.Items.get(await search.search()));
+  }
+  return out;
+}
+
+/**
+ * Move the sync tag from regular items (versions up to 0.3 tagged the item,
+ * syncing all its PDFs) to their PDFs: those already synced, or else the best
+ * one. Tags merge in Zotero sync, so two computers doing this at once agree.
+ */
+async function migrateItemTags(items: Zotero.Item[]): Promise<void> {
   const tag = getSyncTag();
-  if (parent && parent.hasTag(tag)) {
-    // Only drop the tag if no *other* PDF of this item is still synced.
-    const others = Zotero.Items.get(parent.getAttachments()).filter(
-      (a) => a.isPDFAttachment() && a.key !== att.key,
-    );
-    const anyOther = (
-      await Promise.all(others.map((a) => getRecord(a.key)))
-    ).some(Boolean);
-    if (!anyOther) {
-      parent.removeTag(tag);
-      await parent.saveTx();
+  for (const item of items.filter((it) => it.isRegularItem())) {
+    const pdfs = pdfsOf([item]).filter((att) => getRecordCached(att.key));
+    if (!pdfs.length) {
+      const best = await bestPdfOf(item);
+      if (best) pdfs.push(best);
     }
-  }
-}
-
-/** Find tagged regular items in one library. */
-async function findSyncItemsIn(libraryID: number): Promise<Zotero.Item[]> {
-  const search = new Zotero.Search();
-  // `libraryID` is typed read-only but is assignable on a fresh search.
-  (search as any).libraryID = libraryID;
-  search.addCondition("tag", "is", getSyncTag());
-  const ids = await search.search();
-  return Zotero.Items.get(ids).filter((it) => it.isRegularItem());
-}
-
-/** Find all regular (top-level) tagged items across every editable library. */
-export async function findSyncItems(): Promise<Zotero.Item[]> {
-  const libs = Zotero.Libraries.getAll().filter((l) => l.editable);
-  const out: Zotero.Item[] = [];
-  for (const lib of libs) {
-    out.push(...(await findSyncItemsIn(lib.libraryID)));
-  }
-  return out;
-}
-
-/** Collect the PDF attachments of the given regular items. */
-export function pdfAttachmentsOf(items: Zotero.Item[]): Zotero.Item[] {
-  const out: Zotero.Item[] = [];
-  for (const item of items) {
-    const attIDs = item.getAttachments();
-    for (const att of Zotero.Items.get(attIDs)) {
-      if (att.isPDFAttachment()) out.push(att);
+    for (const att of pdfs) {
+      if (!att.hasTag(tag)) {
+        att.addTag(tag, 0);
+        await att.saveTx();
+      }
     }
+    await untag(item);
+    log(`sync tag moved from item ${item.key} to ${pdfs.length} PDF(s)`);
   }
-  return out;
+}
+
+/** Every synced PDF attachment, across the editable libraries. */
+export async function findSyncedPdfs(): Promise<Zotero.Item[]> {
+  const tagged = await taggedItems();
+  await migrateItemTags(tagged);
+  return syncedPdfsOf(await taggedItems());
 }
 
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -178,7 +252,34 @@ function freshRecord(
 }
 
 /**
- * Push every tagged item's PDF attachment to the configured reMarkable folder.
+ * Documents directly in the sync folder that no record links to, by the
+ * sha-256 of their PDF. The cloud names each file by the sha-256 of its bytes,
+ * so this reads the document listings without downloading any PDF.
+ */
+async function unlinkedByPdfHash(
+  api: RemarkableApi,
+  folderId: string,
+): Promise<Map<string, ItemRef[]>> {
+  const linked = new Set(Object.values(await allRecords()).map((r) => r.docId));
+  const out = new Map<string, ItemRef[]>();
+  for (const e of await api.listItems()) {
+    if (e.type !== "DocumentType" || (e.parent ?? "") !== folderId) continue;
+    if (linked.has(e.id)) continue;
+    try {
+      const { entries } = await api.raw.getEntries({ id: e.id, hash: e.hash });
+      const pdf = entries.find((x) => x.id.endsWith(".pdf"));
+      if (pdf) {
+        (out.get(pdf.hash) ?? out.set(pdf.hash, []).get(pdf.hash)!).push(e);
+      }
+    } catch (err) {
+      log(`relink: could not list "${e.visibleName}": ${errMsg(err)}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Push every synced (tagged) PDF attachment to the configured reMarkable folder.
  * Unchanged files (matching the recorded sha-256) are skipped.
  */
 export async function pushAll(
@@ -196,10 +297,10 @@ export async function pushAll(
 
   log("pushAll: start");
   // When given an explicit attachment list (per-item "Overwrite from Zotero"),
-  // push exactly those; otherwise push every tagged item's PDF.
-  const attachments = (
-    opts.attachments ?? pdfAttachmentsOf(await findSyncItems())
-  ).filter((att) => !isInTrash(att));
+  // push exactly those; otherwise push every synced PDF.
+  const attachments = (opts.attachments ?? (await findSyncedPdfs())).filter(
+    (att) => !isInTrash(att),
+  );
   log(`pushAll: ${attachments.length} PDF attachment(s) tagged`);
   if (attachments.length === 0) {
     progress?.("Nothing tagged to sync", 100);
@@ -220,6 +321,8 @@ export async function pushAll(
   // The device documents that currently exist — so we can detect docs deleted on
   // the reMarkable and stop syncing them (rather than re-uploading).
   const deviceDocIds = new Set((await api.listItems()).map((e) => e.id));
+  // Built on first need: unlinked folder documents, by PDF hash.
+  let byPdfHash: Map<string, ItemRef[]> | undefined;
 
   let done = 0;
   for (const att of attachments) {
@@ -238,6 +341,33 @@ export async function pushAll(
       const fileHash = await sha256Hex(bytes);
 
       const existing = await getRecord(att.key);
+
+      // No record (e.g. a computer that never synced this item, and no shared
+      // note): link to the document another computer uploaded for the same
+      // PDF instead of uploading a duplicate.
+      if (!existing && !opts.force) {
+        byPdfHash ??= await unlinkedByPdfHash(api, folderId);
+        const doc = byPdfHash.get(fileHash)?.shift();
+        if (doc) {
+          await setRecord(att.key, {
+            docId: doc.id,
+            docHash: doc.hash,
+            fileHash,
+            visibleName: name,
+            libraryID: att.libraryID,
+            lastPushed: Date.now(),
+            annotationKeys: [],
+            pushedKeys: [],
+            pushedItems: [],
+            deletedSigs: [],
+            adopted: true,
+          });
+          log(`pushAll: linked "${name}" to existing document ${doc.id}`);
+          summary.skipped++;
+          done++;
+          continue;
+        }
+      }
       const missingOnDevice = !!existing && !deviceDocIds.has(existing.docId);
       if (
         !opts.force &&
@@ -342,6 +472,28 @@ function withZoteroDeletions(rec: SyncRecord, libraryID: number): string[] {
   return [...out];
 }
 
+/**
+ * Drop the device items written for Zotero annotations under their own author
+ * (zkey.ts): they mirror Zotero annotations, so the pull must not import them,
+ * whichever computer pushed them.
+ */
+function withoutZoteroItems(pages: RmDocPage[]): RmDocPage[] {
+  return pages.map((p) => {
+    const keyed = keyedAuthors(p.page.authors);
+    if (keyed.size === 0) return p;
+    const fromDevice = (it: { ids?: { part1: number }[] }) =>
+      !it.ids?.length || it.ids.some((i) => !keyed.has(i.part1));
+    return {
+      ...p,
+      page: {
+        ...p.page,
+        strokes: p.page.strokes.filter(fromDevice),
+        highlights: p.page.highlights.filter(fromDevice),
+      },
+    };
+  });
+}
+
 /** Content signatures of the given annotations, by key. */
 function sigsOf(keys: string[], libraryID: number): Record<string, string> {
   const out: Record<string, string> = {};
@@ -384,6 +536,7 @@ export async function pullAll(
   const remote = await api.listItems(true);
   const byId = new Map(remote.map((e) => [e.id, e]));
 
+  const ok: string[] = []; // checked without error
   let done = 0;
   for (const attKey of keys) {
     const rec = records[attKey];
@@ -404,6 +557,7 @@ export async function pullAll(
       }
       if (!opts.force && entry.hash === rec.lastPulledVersion) {
         log(`pullAll: "${rec.visibleName}" unchanged since last pull`);
+        ok.push(attKey);
         done++;
         continue; // unchanged since last pull
       }
@@ -425,7 +579,7 @@ export async function pullAll(
       const deletedSigs = withZoteroDeletions(rec, libraryID);
       const result = await applyAnnotations(
         att as Zotero.Item,
-        pages,
+        withoutZoteroItems(pages),
         sizes,
         rec.annotationKeys ?? [],
         deletedSigs,
@@ -435,6 +589,7 @@ export async function pullAll(
       const updated: SyncRecord = {
         ...rec,
         lastPulledVersion: entry.hash,
+        adopted: undefined,
         annotationKeys: result.keys,
         annotationSigs: sigsOf(result.keys, libraryID),
         annotationSources: result.sources,
@@ -445,6 +600,7 @@ export async function pullAll(
       };
       await setRecord(attKey, updated);
       summary.updated++;
+      ok.push(attKey);
       summary.annotations += result.added;
       summary.removed += result.removed;
       log(
@@ -457,6 +613,7 @@ export async function pullAll(
     }
     done++;
   }
+  await markSynced(ok);
   progress?.("", 100);
   return summary;
 }
@@ -557,13 +714,24 @@ export function isInTrash(att: Zotero.Item): boolean {
   return !!att.deleted || !!att.parentItem?.deleted;
 }
 
-/** Tag the given regular items so they are included in sync. */
+/**
+ * Tag PDFs so they are included in sync: a selected PDF itself, or for a
+ * regular item with no synced PDF, its best PDF (one document per paper).
+ */
 export async function addToSync(items: Zotero.Item[]): Promise<void> {
   const tag = getSyncTag();
+  const targets: Zotero.Item[] = [];
   for (const item of items) {
-    if (!item.isRegularItem() || item.hasTag(tag)) continue;
-    item.addTag(tag, 0);
-    await item.saveTx();
+    if (item.isPDFAttachment()) targets.push(item);
+    else if (item.isRegularItem() && !isItemSynced(item)) {
+      const best = await bestPdfOf(item);
+      if (best) targets.push(best);
+    }
+  }
+  for (const att of targets) {
+    if (att.hasTag(tag)) continue;
+    att.addTag(tag, 0);
+    await att.saveTx();
   }
 }
 
@@ -583,14 +751,15 @@ export async function removeFromSync(
     progress?: ProgressFn;
   } = {},
 ): Promise<void> {
-  const tag = getSyncTag();
   const deleteRemote = opts.deleteRemote ?? !!getPref("deleteOnUnsync");
 
-  const regular = items.filter((it) => it.isRegularItem());
+  // A selected PDF, or a regular item's synced PDFs (all its PDFs with a
+  // record, for one tagged by an older version).
+  const pdfs = pdfsOf(items).filter(
+    (att) => att.hasTag(getSyncTag()) || !!getRecordCached(att.key),
+  );
   const attKeys = new Set(
-    pdfAttachmentsOf(regular)
-      .filter((att) => getRecordCached(att.key))
-      .map((att) => att.key),
+    pdfs.filter((att) => getRecordCached(att.key)).map((att) => att.key),
   );
 
   // Last pull, so annotations made on the tablet since the last sync are kept.
@@ -621,32 +790,25 @@ export async function removeFromSync(
     api = await client.getApi();
   }
 
-  for (const item of regular) {
-    if (item.hasTag(tag)) {
-      item.removeTag(tag);
-      await item.saveTx();
-    }
-    for (const att of Zotero.Items.get(item.getAttachments())) {
-      if (!att.isPDFAttachment()) continue;
-      const record = await getRecord(att.key);
-      if (record && api && !keepRemote.has(att.key)) {
-        try {
-          const entry = await client.findById(api, record.docId);
-          if (entry && opts.purge) {
-            await client.purgeDoc(api, entry);
-            log(`unsync: permanently deleted "${record.visibleName}"`);
-          } else if (entry) {
-            await client.trashDoc(api, entry);
-            log(`unsync: moved "${record.visibleName}" to reMarkable trash`);
-          }
-        } catch (e) {
-          // Best effort: leave the remote doc if deletion fails.
-          log(
-            `unsync: delete failed for "${record.visibleName}": ${errMsg(e)}`,
-          );
+  for (const item of items) await untag(item); // tagged by an older version
+  for (const att of pdfs) {
+    await untag(att);
+    const record = await getRecord(att.key);
+    if (record && api && !keepRemote.has(att.key)) {
+      try {
+        const entry = await client.findById(api, record.docId);
+        if (entry && opts.purge) {
+          await client.purgeDoc(api, entry);
+          log(`unsync: permanently deleted "${record.visibleName}"`);
+        } else if (entry) {
+          await client.trashDoc(api, entry);
+          log(`unsync: moved "${record.visibleName}" to reMarkable trash`);
         }
+      } catch (e) {
+        // Best effort: leave the remote doc if deletion fails.
+        log(`unsync: delete failed for "${record.visibleName}": ${errMsg(e)}`);
       }
-      await removeRecord(att.key);
     }
+    await removeRecord(att.key);
   }
 }

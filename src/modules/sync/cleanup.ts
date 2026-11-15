@@ -106,7 +106,7 @@ export async function findOrphans(
         attKey,
       ) as Zotero.Item | false;
       if (isLive(att)) {
-        if (att.parentItem?.hasTag(tag)) continue; // properly synced
+        if (att.hasTag(tag)) continue; // properly synced
         orphans.push({ entry, candidate: att, reason: "record" });
         continue;
       }
@@ -132,15 +132,14 @@ export async function findOrphans(
 }
 
 /**
- * Link a device document to a Zotero PDF: tag its parent item and record the
- * mapping so the next sync pulls its annotations instead of re-uploading.
+ * Link a device document to a Zotero PDF: tag the PDF and record the mapping
+ * so the next sync pulls its annotations instead of re-uploading.
  */
 async function relink(entry: Entry, att: Zotero.Item): Promise<void> {
-  const parent = att.parentItem;
   const tag = getSyncTag();
-  if (parent && !parent.hasTag(tag)) {
-    parent.addTag(tag, 0);
-    await parent.saveTx();
+  if (!att.hasTag(tag)) {
+    att.addTag(tag, 0);
+    await att.saveTx();
   }
 
   const existing = await getRecord(att.key);

@@ -12,6 +12,8 @@ import * as engine from "./sync/engine";
 import { pushAnnotations } from "./sync/push";
 import * as client from "./remarkable/client";
 import * as cleanup from "./sync/cleanup";
+import { lastSyncedCached } from "./sync/state";
+import { pdfState, pdfsOf, statusIcon, STATES, type SyncState } from "./status";
 
 // 96px icon (manifest/install). For in-app UI we use a small 32px variant so
 // it isn't rendered oversized in the toolbar / item-pane sidenav.
@@ -61,15 +63,16 @@ function clearWindowUI(win: Window): void {
 // Shared runner
 // ---------------------------------------------------------------------------
 
-function selectedRegularItems(win: Window): Zotero.Item[] {
+/** Selected papers and PDF attachments (what sync actions apply to). */
+function selectedItems(win: Window): Zotero.Item[] {
   const pane = (win as any).ZoteroPane;
   const items: Zotero.Item[] = pane?.getSelectedItems?.() ?? [];
-  return items.filter((it) => it.isRegularItem());
+  return items.filter((it) => it.isRegularItem() || it.isPDFAttachment());
 }
 
 /**
- * Push PDFs + annotations, then pull. With `items`, only those papers' PDF
- * attachments are synced; otherwise every tagged item is.
+ * Push PDFs + annotations, then pull. With `items`, only their synced PDFs
+ * are synced; otherwise every synced PDF is.
  */
 export async function runSyncNow(items?: Zotero.Item[]): Promise<void> {
   if (!client.isConnected()) {
@@ -89,7 +92,7 @@ export async function runSyncNow(items?: Zotero.Item[]): Promise<void> {
   try {
     const report = (text: string, pct: number) =>
       pw.changeLine({ progress: pct, text });
-    const atts = items ? engine.pdfAttachmentsOf(items) : undefined;
+    const atts = items ? engine.syncedPdfsOf(items) : undefined;
     const onlyKeys = atts ? new Set(atts.map((a) => a.key)) : undefined;
     const runOnce = async () => {
       const push = await engine.pushAll(report, { attachments: atts });
@@ -99,6 +102,7 @@ export async function runSyncNow(items?: Zotero.Item[]): Promise<void> {
       return { push, sent, pull };
     };
     let push, sent, pull;
+    await engine.beginRun(report);
     try {
       ({ push, sent, pull } = await runOnce());
     } catch (e) {
@@ -109,6 +113,7 @@ export async function runSyncNow(items?: Zotero.Item[]): Promise<void> {
       client.resetApi();
       ({ push, sent, pull } = await runOnce());
     }
+    await engine.endRun();
     pw.changeLine({
       progress: 100,
       text: getString("sync-complete", {
@@ -148,10 +153,11 @@ export async function runForcePull(): Promise<void> {
     .createLine({ text: getString("sync-running"), progress: 0 })
     .show();
   try {
-    const pull = await engine.pullAll(
-      (text, pct) => pw.changeLine({ progress: pct, text }),
-      { force: true },
-    );
+    const report = (text: string, pct: number) =>
+      pw.changeLine({ progress: pct, text });
+    await engine.beginRun(report);
+    const pull = await engine.pullAll(report, { force: true });
+    await engine.endRun();
     pw.changeLine({
       progress: 100,
       text: getString("pull-done", {
@@ -180,9 +186,11 @@ export async function runPush(): Promise<void> {
     .createLine({ text: getString("sync-running"), progress: 0 })
     .show();
   try {
-    const summary = await pushAnnotations((text, pct) =>
-      pw.changeLine({ progress: pct, text }),
-    );
+    const report = (text: string, pct: number) =>
+      pw.changeLine({ progress: pct, text });
+    await engine.beginRun(report);
+    const summary = await pushAnnotations(report);
+    await engine.endRun();
     pw.changeLine({
       progress: 100,
       text: getString("push-done", {
@@ -258,7 +266,7 @@ export async function runOverwriteFromZotero(
   items: Zotero.Item[],
 ): Promise<void> {
   if (notConnected() || blockedBySafeMode()) return;
-  const atts = engine.pdfAttachmentsOf(items);
+  const atts = engine.syncedPdfsOf(items);
   if (atts.length === 0) {
     new ztoolkit.ProgressWindow(config.addonName)
       .createLine({ text: getString("nothing-selected"), type: "fail" })
@@ -270,8 +278,10 @@ export async function runOverwriteFromZotero(
   try {
     const report = (text: string, pct: number) =>
       pw.changeLine({ progress: pct, text });
+    await engine.beginRun(report);
     await engine.pushAll(report, { attachments: atts, force: true });
     const ann = await pushAnnotations(report, { onlyKeys });
+    await engine.endRun();
     pw.changeLine({
       progress: 100,
       text: getString("overwrite-zotero-done", { args: { sent: ann.pushed } }),
@@ -293,7 +303,7 @@ export async function runOverwriteFromRemarkable(
   items: Zotero.Item[],
 ): Promise<void> {
   if (notConnected()) return;
-  const atts = engine.pdfAttachmentsOf(items);
+  const atts = engine.syncedPdfsOf(items);
   if (atts.length === 0) {
     new ztoolkit.ProgressWindow(config.addonName)
       .createLine({ text: getString("nothing-selected"), type: "fail" })
@@ -305,8 +315,10 @@ export async function runOverwriteFromRemarkable(
   try {
     const report = (text: string, pct: number) =>
       pw.changeLine({ progress: pct, text });
+    await engine.beginRun(report);
     await engine.resetPullState([...onlyKeys]);
     const pull = await engine.pullAll(report, { force: true, onlyKeys });
+    await engine.endRun();
     pw.changeLine({
       progress: 100,
       text: getString("overwrite-remarkable-done", {
@@ -332,7 +344,7 @@ export async function runOverwriteFromRemarkable(
  */
 export async function runForcePush(items: Zotero.Item[]): Promise<void> {
   if (notConnected() || blockedBySafeMode()) return;
-  const atts = engine.pdfAttachmentsOf(items);
+  const atts = engine.syncedPdfsOf(items);
   if (atts.length === 0) {
     new ztoolkit.ProgressWindow(config.addonName)
       .createLine({ text: getString("nothing-selected"), type: "fail" })
@@ -341,10 +353,14 @@ export async function runForcePush(items: Zotero.Item[]): Promise<void> {
   }
   const pw = newProgress();
   try {
-    const summary = await pushAnnotations(
-      (text, pct) => pw.changeLine({ progress: pct, text }),
-      { onlyKeys: new Set(atts.map((a) => a.key)), force: true },
-    );
+    const report = (text: string, pct: number) =>
+      pw.changeLine({ progress: pct, text });
+    await engine.beginRun(report);
+    const summary = await pushAnnotations(report, {
+      onlyKeys: new Set(atts.map((a) => a.key)),
+      force: true,
+    });
+    await engine.endRun();
     pw.changeLine({
       progress: 100,
       text: getString("force-push-done", {
@@ -521,7 +537,7 @@ function askOrphan(
 }
 
 /**
- * Review the reMarkable sync folder for documents not linked to a tagged item.
+ * Review the reMarkable sync folder for documents not linked to a synced PDF.
  * Asks per document (relink / move to trash / ignore), then confirms once more
  * before changing anything.
  */
@@ -684,7 +700,7 @@ function registerContextMenu(win: Window): void {
     getString("menuitem-add-to-sync"),
     () => {
       engine
-        .addToSync(selectedRegularItems(win))
+        .addToSync(selectedItems(win))
         .then(() => refreshStatusDots())
         .catch((e) => log("addToSync error:", e));
     },
@@ -694,20 +710,20 @@ function registerContextMenu(win: Window): void {
     "remove",
     getString("menuitem-remove-from-sync"),
     () => {
-      void runRemoveFromSync(win, selectedRegularItems(win));
+      void runRemoveFromSync(win, selectedItems(win));
     },
   );
   const ovrZotero = makeMenuitem(
     doc,
     "ovr-zotero",
     getString("menuitem-overwrite-from-zotero"),
-    () => void runOverwriteFromZotero(selectedRegularItems(win)),
+    () => void runOverwriteFromZotero(selectedItems(win)),
   );
   const ovrRemarkable = makeMenuitem(
     doc,
     "ovr-remarkable",
     getString("menuitem-overwrite-from-remarkable"),
-    () => void runOverwriteFromRemarkable(selectedRegularItems(win)),
+    () => void runOverwriteFromRemarkable(selectedItems(win)),
   );
 
   [sep, addItem, removeItem, ovrZotero, ovrRemarkable].forEach((n) =>
@@ -715,7 +731,7 @@ function registerContextMenu(win: Window): void {
   );
 
   const onShowing = () => {
-    const items = selectedRegularItems(win);
+    const items = selectedItems(win);
     const anyUnsynced = items.some((i) => !engine.isItemSynced(i));
     const anySynced = items.some((i) => engine.isItemSynced(i));
     (addItem as any).hidden = !anyUnsynced;
@@ -784,62 +800,143 @@ function renderSection(
   doc: Document,
 ): void {
   body.replaceChildren();
-  if (!item?.isRegularItem()) return;
+  if (!item?.isRegularItem() && !item?.isPDFAttachment()) return;
+  const el = <K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    style: Partial<CSSStyleDeclaration> = {},
+    text?: string,
+  ) => {
+    const e = doc.createElement(tag);
+    Object.assign(e.style, style);
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
 
   // Guide the user to connect first.
   if (!client.isConnected()) {
-    const hint = doc.createElement("div");
-    hint.style.opacity = "0.8";
-    hint.textContent = getString("status-not-connected");
-    body.appendChild(hint);
+    body.appendChild(
+      el("div", { opacity: "0.8" }, getString("status-not-connected")),
+    );
     return;
   }
 
-  const synced = engine.isItemSynced(item);
+  const pdfs = pdfsOf(item);
+  if (!pdfs.length) {
+    body.appendChild(el("div", { opacity: "0.8" }, getString("pane-no-pdf")));
+    return;
+  }
 
-  const status = doc.createElement("div");
-  status.style.marginBottom = "6px";
-  status.textContent = synced
-    ? getString("status-synced")
-    : getString("status-not-synced");
-  body.appendChild(status);
-
-  const toggle = doc.createElement("button");
-  toggle.textContent = synced
-    ? getString("menuitem-remove-from-sync")
-    : getString("menuitem-add-to-sync");
-  toggle.addEventListener("click", async () => {
-    try {
-      if (synced) await runRemoveFromSync(doc.defaultView!, [item]);
-      else await engine.addToSync([item]);
-      renderSection(body, item, doc);
-    } catch (e) {
-      log("toggle sync error:", e);
-    }
+  const rerender = () => {
+    renderSection(body, item, doc);
+    refreshStatusDots();
+  };
+  const list = el("div", {
+    display: "grid",
+    gridTemplateColumns: "auto 1fr auto",
+    alignItems: "center",
+    columnGap: "8px",
+    rowGap: "8px",
   });
-  body.appendChild(toggle);
+  for (const att of pdfs) {
+    const state = pdfState(att);
+    const synced = engine.isItemSynced(att);
 
-  // Split button: the main part syncs this item, the arrow offers forced
-  // one-way runs (handy to try a change on a single paper).
-  const group = doc.createElement("span");
-  group.style.display = "inline-flex";
-  group.style.marginInlineStart = "6px";
-  const sync = doc.createElement("button");
-  sync.textContent = getString("sync-now");
-  sync.disabled = !synced;
-  sync.style.borderStartEndRadius = "0";
-  sync.style.borderEndEndRadius = "0";
-  sync.addEventListener("click", () => void runSyncNow([item]));
-  const more = doc.createElement("button");
-  more.textContent = "▾";
-  more.title = getString("sync-more-tooltip");
-  more.disabled = !synced;
-  more.style.borderStartStartRadius = "0";
-  more.style.borderEndStartRadius = "0";
-  more.style.marginInlineStart = "-1px";
-  more.addEventListener("click", () => openSyncMenu(doc, more, item));
-  group.append(sync, more);
-  body.appendChild(group);
+    const icon = el("span", { display: "flex", justifyContent: "center" });
+    if (state) icon.appendChild(statusIcon(doc, state, 14));
+    else icon.appendChild(el("span", { width: "14px" }));
+
+    const label = el("div", { minWidth: "0" });
+    label.appendChild(
+      el(
+        "div",
+        { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+        att.getDisplayTitle(),
+      ),
+    );
+    label.appendChild(
+      el("div", { opacity: "0.7", fontSize: "0.92em" }, stateText(att, state)),
+    );
+    label.title = att.attachmentFilename || att.getDisplayTitle();
+
+    const actions = el("div", { display: "flex", gap: "4px" });
+    if (synced) {
+      const sync = el("button", {}, `${getString("pane-sync")} ▾`);
+      sync.title = getString("sync-more-tooltip");
+      sync.addEventListener("click", () => openSyncMenu(doc, sync, att));
+      const remove = el("button", {}, getString("pane-remove"));
+      remove.addEventListener("click", async () => {
+        await runRemoveFromSync(doc.defaultView!, [att]);
+        rerender();
+      });
+      actions.append(sync, remove);
+    } else {
+      const add = el("button", {}, getString("pane-add"));
+      add.addEventListener("click", async () => {
+        try {
+          await engine.addToSync([att]);
+        } catch (e) {
+          log("add to sync error:", e);
+        }
+        rerender();
+      });
+      actions.append(add);
+    }
+    list.append(icon, label, actions);
+  }
+  body.appendChild(list);
+
+  // Legend: what the icons (here and in the item list) mean.
+  const legend = el("details", { marginTop: "10px", opacity: "0.85" });
+  legend.appendChild(
+    el("summary", { cursor: "default" }, getString("pane-legend")),
+  );
+  const keys = el("div", {
+    display: "grid",
+    gridTemplateColumns: "auto 1fr",
+    alignItems: "center",
+    columnGap: "8px",
+    rowGap: "4px",
+    marginTop: "4px",
+  });
+  for (const st of STATES) {
+    const icon = el("span", { display: "flex", justifyContent: "center" });
+    icon.appendChild(statusIcon(doc, st, 14));
+    keys.append(icon, el("span", {}, getString(`status-${st}`)));
+  }
+  legend.appendChild(keys);
+  body.appendChild(legend);
+}
+
+/** One line describing a PDF's sync status, e.g. "Synced 2 hours ago". */
+function stateText(att: Zotero.Item, state: SyncState): string {
+  if (state === "fresh" || state === "stale") {
+    const at = lastSyncedCached(att.key);
+    const when = at ? relativeTime(at) : "";
+    return getString(`pane-state-${state}`, { args: { when } });
+  }
+  if (state === "changed" || state === "never")
+    return getString(`pane-state-${state}`);
+  return getString("pane-state-off");
+}
+
+/** "5 minutes ago", "yesterday"… in the UI language. */
+function relativeTime(at: number): string {
+  const rtf = new Intl.RelativeTimeFormat(Zotero.locale, { numeric: "auto" });
+  const s = Math.round((at - Date.now()) / 1000);
+  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["second", 60],
+    ["minute", 60],
+    ["hour", 24],
+    ["day", 30],
+    ["month", 12],
+    ["year", Infinity],
+  ];
+  let v = s;
+  for (const [unit, size] of steps) {
+    if (Math.abs(v) < size) return rtf.format(Math.round(v), unit);
+    v /= size;
+  }
+  return "";
 }
 
 /** Drop-down of forced sync runs for one item, anchored to `anchor`. */

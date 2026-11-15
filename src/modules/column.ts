@@ -1,83 +1,13 @@
 // reMarkable status indicator shown *before the item title* (not a separate
-// column). A small coloured dot reflecting sync state. Implemented by wrapping
+// column). A small icon reflecting sync state (status.ts). Implemented by wrapping
 // the item tree's `_renderCell` (which builds the primary/title cell for the
 // first column). The ItemTree class is a CommonJS module — `Zotero.ItemTree`
 // does not exist — so we resolve its prototype from the window's `require` or a
 // live instance. Every addition is in try/catch so it can never break the list.
 
-import { getRecordCached } from "./sync/state";
-import { getSyncTag } from "./sync/engine";
-import { pushFingerprint } from "./sync/annotations";
+import { stateOf, statusIcon } from "./status";
+import { getString } from "../utils/locale";
 import { log } from "../utils/log";
-
-const FRESH_MS = 24 * 60 * 60 * 1000; // "synced recently" window
-const PUSHABLE = new Set(["highlight", "underline", "ink"]);
-
-type SyncState = "fresh" | "stale" | "changed" | "never" | "";
-
-const DOT: Record<Exclude<SyncState, "">, [string, string, string]> = {
-  fresh: ["●", "#3fae4a", "reMarkable: synced recently"],
-  stale: ["●", "#9b9b9b", "reMarkable: synced a while ago"],
-  changed: ["◆", "#e67e22", "reMarkable: changed, not yet synced"],
-  never: ["○", "#c0c0c0", "reMarkable: tagged, not synced yet"],
-};
-
-function stateOf(item: Zotero.Item): SyncState {
-  if (!item?.isRegularItem?.()) return "";
-  let lastPushed = 0;
-  let hasRecord = false;
-  let dirty = false;
-  for (const att of Zotero.Items.get(item.getAttachments())) {
-    if (!att.isPDFAttachment()) continue;
-    const rec = getRecordCached(att.key);
-    if (!rec) continue;
-    hasRecord = true;
-    lastPushed = Math.max(lastPushed, rec.lastPushed || 0);
-    // Map of already-pushed annotation key -> its fingerprint when pushed, so we
-    // can tell a brand-new annotation from an edited one (same key).
-    const pushedSig = new Map<string, string | undefined>();
-    for (const p of rec.pushedItems ?? []) pushedSig.set(p.key, p.rev);
-    const pulled = new Set(rec.annotationKeys ?? []);
-    const present = new Set<string>();
-    for (const a of att.getAnnotations()) {
-      if (!PUSHABLE.has(a.annotationType) || pulled.has(a.key)) continue;
-      present.add(a.key);
-      if (!pushedSig.has(a.key)) {
-        dirty = true; // never pushed
-        break;
-      }
-      const was = pushedSig.get(a.key);
-      if (was && pushFingerprint(a) !== was) {
-        dirty = true; // pushed before, but edited since
-        break;
-      }
-    }
-    // A pulled annotation deleted in Zotero is still on the device until the
-    // next push.
-    if (!dirty) {
-      for (const key of Object.keys(rec.annotationSources ?? {})) {
-        const it = Zotero.Items.getByLibraryAndKey(att.libraryID, key);
-        if (!it || (it as Zotero.Item).deleted) {
-          dirty = true;
-          break;
-        }
-      }
-    }
-    // A previously-pushed annotation that no longer exists was deleted in Zotero
-    // but still lives on the device until the next push.
-    if (!dirty) {
-      for (const key of pushedSig.keys()) {
-        if (!present.has(key)) {
-          dirty = true;
-          break;
-        }
-      }
-    }
-  }
-  if (!hasRecord) return item.hasTag(getSyncTag()) ? "never" : "";
-  if (dirty) return "changed";
-  return Date.now() - lastPushed < FRESH_MS ? "fresh" : "stale";
-}
 
 /** Resolve the ItemTree prototype from a window (require module or instance). */
 function itemTreeProto(win: any): any {
@@ -104,15 +34,11 @@ function patchProto(proto: any): boolean {
       const item = this.getRow?.(index)?.ref as Zotero.Item;
       const st = stateOf(item);
       if (st) {
-        const [glyph, color, title] = DOT[st];
-        const dot = cell.ownerDocument.createElement("span");
-        dot.textContent = `${glyph} `;
-        dot.style.color = color;
-        dot.style.flex = "none";
-        dot.style.fontSize = "0.9em";
-        dot.setAttribute("title", title);
+        const icon = statusIcon(cell.ownerDocument, st);
+        icon.style.marginInlineEnd = "4px";
+        icon.setAttribute("title", `reMarkable: ${getString(`status-${st}`)}`);
         const text = cell.querySelector?.(".cell-text");
-        cell.insertBefore(dot, text ?? cell.firstChild);
+        cell.insertBefore(icon, text ?? cell.firstChild);
       }
     } catch {
       // never break the item tree

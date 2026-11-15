@@ -20,9 +20,11 @@ async function tick(): Promise<void> {
   ticking = true;
   try {
     log("scheduler: auto-sync tick");
+    await engine.beginRun();
     await engine.pushAll();
     await pushAnnotations();
     await engine.pullAll();
+    await engine.endRun();
   } catch (e) {
     log("scheduler: tick error:", errMsg(e));
   } finally {

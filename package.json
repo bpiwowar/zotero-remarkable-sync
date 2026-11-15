@@ -34,7 +34,8 @@
     "update-deps": "npm update --save",
     "prepare": "husky",
     "devtest": "esbuild scripts/devtest.ts --bundle --platform=node --format=esm --outfile=.scaffold/devtest.mjs --log-level=error && node .scaffold/devtest.mjs",
-    "test:pdfpages": "esbuild src/modules/remarkable/geometry.ts --bundle --format=esm --outfile=.scaffold/geometry.mjs --log-level=error && node test/pdfpages.verify.mjs"
+    "test:pdfpages": "esbuild src/modules/remarkable/geometry.ts --bundle --format=esm --outfile=.scaffold/geometry.mjs --log-level=error && node test/pdfpages.verify.mjs",
+    "test:shared": "esbuild src/modules/remarkable/zkey.ts --bundle --format=esm --outfile=.scaffold/zkey.mjs --log-level=error && esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && esbuild src/modules/remarkable/rmwrite.ts --bundle --format=esm --outfile=.scaffold/rmwrite.mjs --log-level=error && esbuild src/modules/sync/state.ts --bundle --format=esm --outfile=.scaffold/state.mjs --log-level=error && node test/shared.verify.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",

@@ -40,6 +40,7 @@ import {
   type SyncRecord,
 } from "./state";
 import { existingSig, pushFingerprint } from "./annotations";
+import { keyToUuid, keyedAuthors, MAX_AUTHOR } from "../remarkable/zkey";
 import {
   isSafeMode as engineIsSafeMode,
   isInTrash,
@@ -203,6 +204,49 @@ interface Template {
   layerId: CrdtId;
   author: number;
   startCounter: number;
+  authors: Map<number, string>;
+}
+
+/**
+ * The author of each item written for `owners` (Zotero annotation keys): the
+ * page author whose uuid encodes the key, registered if new. Falls back to
+ * `fallback` when the key can't be encoded or the page has no free author id.
+ */
+function authorsFor(
+  owners: string[],
+  table: Map<number, string>,
+  maxAuthor: number,
+  fallback: number,
+): { authors: number[]; register: Map<number, string>; keyed: Set<string> } {
+  const byUuid = new Map([...table].map(([a, u]) => [u, a]));
+  const register = new Map<number, string>();
+  const keyed = new Set<string>();
+  let next = Math.max(maxAuthor, fallback, ...table.keys()) + 1;
+  const authors = owners.map((key) => {
+    const uuid = keyToUuid(key);
+    if (!uuid) return fallback;
+    let a = byUuid.get(uuid);
+    if (a === undefined) {
+      if (next > MAX_AUTHOR) return fallback;
+      a = next++;
+      byUuid.set(uuid, a);
+      register.set(a, uuid);
+    }
+    keyed.add(key);
+    return a;
+  });
+  return { authors, register, keyed };
+}
+
+/** Shape of a stroke or highlight, to spot exact copies on a page. */
+function itemShape(it: RmStroke | RmHighlight): string {
+  const r = (v: number) => Math.round(v * 100);
+  if ("rects" in it) {
+    const rects = it.rects.map((q) => [q.x, q.y, q.w, q.h].map(r).join(","));
+    return `h|${it.colorIndex}|${it.text}|${rects.join(";")}`;
+  }
+  const pts = it.points.map((q) => `${r(q.x)},${r(q.y)}`).join(";");
+  return `s|${it.tool}|${it.colorIndex}|${pts}`;
 }
 
 /** Find any page that has a `.rm` and turn it into a structural template. */
@@ -221,6 +265,7 @@ async function loadTemplate(
           layerId: parsed.layerId,
           author: parsed.lastItemId?.part1 ?? parsed.maxAuthor,
           startCounter: parsed.maxCounter + 1,
+          authors: parsed.authors,
         };
       }
     } catch {
@@ -281,6 +326,15 @@ export async function pushAnnotations(
         log(
           `push: skip "${rec.visibleName}" (${!att ? "no attachment" : "not on cloud"})`,
         );
+        done++;
+        continue;
+      }
+
+      // A document found on the device by its PDF hash, with no shared record,
+      // is pulled first: until then, annotations another computer pulled from
+      // it can't be told from the user's own.
+      if (rec.adopted) {
+        log(`push: skip "${rec.visibleName}" (adopted, not pulled yet)`);
         done++;
         continue;
       }
@@ -360,17 +414,29 @@ export async function pushAnnotations(
       // Group previously-written items by page (ids to remove, keys present).
       const trackedByPage = new Map<
         string,
-        { ids: CrdtId[]; keys: Set<string>; revs: Map<string, string> }
+        {
+          ids: CrdtId[];
+          keys: Set<string>;
+          revs: Map<string, string>;
+          legacy: boolean;
+        }
       >();
       for (const t of tracked) {
         const e =
           trackedByPage.get(t.page) ??
           trackedByPage
-            .set(t.page, { ids: [], keys: new Set(), revs: new Map() })
+            .set(t.page, {
+              ids: [],
+              keys: new Set(),
+              revs: new Map(),
+              legacy: false,
+            })
             .get(t.page)!;
         for (const [p1, p2] of t.ids) e.ids.push({ part1: p1, part2: p2 });
         e.keys.add(t.key);
         if (t.rev) e.revs.set(t.key, t.rev);
+        // Written before items had their own author: rewrite it once.
+        if (t.keyed === undefined) e.legacy = true;
       }
 
       const pageUuids = new Set<string>([
@@ -391,6 +457,7 @@ export async function pushAnnotations(
           ids: [],
           keys: new Set<string>(),
           revs: new Map<string, string>(),
+          legacy: false,
         };
         const managedKeys = new Set(managedItems.map((a) => a.key));
         // Skip pages whose managed set is unchanged — same annotations, none
@@ -403,7 +470,8 @@ export async function pushAnnotations(
             return !was || pushFingerprint(a) === was;
           });
         const deletedHere = unpulled.byPage.get(pageUuid) ?? [];
-        if (!opts.force && sameSet && deletedHere.length === 0) continue;
+        if (!opts.force && sameSet && !here.legacy && deletedHere.length === 0)
+          continue;
 
         const found = findRef(pageUuid);
         const size = pageSizeAt(sizes, found ? found.pdfIdx : 0);
@@ -423,16 +491,52 @@ export async function pushAnnotations(
           }
         }
 
+        const owners = [...hlOwners, ...stOwners];
         let bytes: Uint8Array;
         let ids: CrdtId[];
+        let keyed: Set<string>;
         if (found?.ref.rmEntry) {
           const existing = await api.raw.getHash(found.ref.rmEntry);
           const parsed = parseRmPage(existing);
           if (!parsed.layerId) continue;
+          // Besides what this computer wrote, drop the items any computer wrote
+          // for these annotations (under their own author).
+          const rewrite = new Set([...managedKeys, ...here.keys]);
+          const byAuthor = keyedAuthors(parsed.authors);
+          const written: string[] = [];
+          for (const it of [...parsed.strokes, ...parsed.highlights])
+            for (const i of it.ids ?? [])
+              if (rewrite.has(byAuthor.get(i.part1) ?? ""))
+                written.push(`${i.part1},${i.part2}`);
+          // Exact copies of what we write, under another author: leftovers of
+          // a push whose tracking was lost (a reset, or a note version lost
+          // in a Zotero conflict). Same shape, colour and text to 1/100 unit:
+          // a hand-drawn item never matches that closely.
+          const ours = new Set([
+            ...highlights.map(itemShape),
+            ...strokes.map(itemShape),
+          ]);
+          for (const it of [...parsed.strokes, ...parsed.highlights]) {
+            const id = it.ids?.[0];
+            if (id && !byAuthor.has(id.part1) && ours.has(itemShape(it)))
+              written.push(`${id.part1},${id.part2}`);
+          }
           const removeIds = new Set([
             ...here.ids.map((id) => `${id.part1},${id.part2}`),
             ...deletedHere,
+            ...written,
           ]);
+          const fallback =
+            parsed.lastItemId?.part1 ??
+            parsed.layerId.part1 ??
+            parsed.maxAuthor;
+          const who = authorsFor(
+            owners,
+            parsed.authors,
+            parsed.maxAuthor,
+            fallback,
+          );
+          keyed = who.keyed;
           ({ bytes, ids } = rebuildPage(
             existing,
             strokes,
@@ -441,11 +545,10 @@ export async function pushAnnotations(
             {
               layerId: parsed.layerId,
               lastItemId: parsed.lastItemId,
-              author:
-                parsed.lastItemId?.part1 ??
-                parsed.layerId.part1 ??
-                parsed.maxAuthor,
+              author: fallback,
               startCounter: parsed.maxCounter + 1,
+              authors: who.authors,
+              register: who.register,
             },
           ));
         } else {
@@ -454,6 +557,13 @@ export async function pushAnnotations(
             template = (await loadTemplate(api, pageMap)) ?? blankStructure();
           }
           if (!template) continue;
+          const who = authorsFor(
+            owners,
+            template.authors,
+            template.author,
+            template.author,
+          );
+          keyed = who.keyed;
           ({ bytes, ids } = rebuildPage(
             template.structure,
             strokes,
@@ -463,6 +573,8 @@ export async function pushAnnotations(
               layerId: template.layerId,
               author: template.author,
               startCounter: template.startCounter,
+              authors: who.authors,
+              register: who.register,
             },
           ));
         }
@@ -470,7 +582,6 @@ export async function pushAnnotations(
         rewritten.add(pageUuid);
 
         // Track the new ids per annotation.
-        const owners = [...hlOwners, ...stOwners];
         const byKey = new Map<string, [number, number][]>();
         ids.forEach((id, i) => {
           const k = owners[i];
@@ -486,6 +597,7 @@ export async function pushAnnotations(
             ids: kids,
             sig: (item && existingSig(item)) || undefined,
             rev: item ? pushFingerprint(item) : undefined,
+            keyed: keyed.has(k),
           });
           writtenItems++;
         }
