@@ -58,7 +58,14 @@ device token is stored in Zotero preferences.
 - **Sync**: tag an item `@remarkable` (right-click → _reMarkable: Add to sync_),
   then the toolbar **Sync now** button (or set an interval in preferences).
 - **Tools menu**: _Sync now_, _Force re-pull annotations_, _Remove pulled
-  annotations_ (removes only plugin-created annotations).
+  annotations_ (removes only plugin-created annotations), _Clean up device
+  folder…_ (see below).
+- **Cleanup**: _Clean up device folder…_ lists documents in the reMarkable sync
+  folder that are not linked to an item tagged for sync, and asks for each one:
+  **Ignore** (default), **Relink** (when a Zotero item matches — tags it and
+  links it without re-uploading) or **Move to trash** (recoverable on the
+  device). Nothing changes until a final confirmation. Sub-folders are left
+  alone.
 
 Annotations sync **reMarkable → Zotero** only; the Zotero side is never modified
 destructively, so you can keep annotating on the device. Text highlights become

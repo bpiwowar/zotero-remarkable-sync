@@ -10,6 +10,7 @@ import { log, errMsg } from "../utils/log";
 import * as engine from "./sync/engine";
 import { pushAnnotations } from "./sync/push";
 import * as client from "./remarkable/client";
+import * as cleanup from "./sync/cleanup";
 
 // 96px icon (manifest/install). For in-app UI we use a small 32px variant so
 // it isn't rendered oversized in the toolbar / item-pane sidenav.
@@ -27,6 +28,7 @@ const ELEMENT_IDS = [
   `${ID}-tools-push`,
   `${ID}-tools-forcepull`,
   `${ID}-tools-clearpulled`,
+  `${ID}-tools-cleanup`,
   `${ID}-sep`,
   `${ID}-add`,
   `${ID}-remove`,
@@ -314,6 +316,150 @@ export async function runOverwriteFromRemarkable(
   }
 }
 
+/**
+ * Ask, for one untracked device document, what to do with it. Ignore is the
+ * default (Enter / Escape / closing the dialog). `stop` is set when the user
+ * ticked "ignore all remaining".
+ */
+function askOrphan(
+  win: Window,
+  orphan: cleanup.Orphan,
+  index: number,
+  total: number,
+): { decision: cleanup.Decision; stop: boolean } {
+  const Services = ztoolkit.getGlobal("Services");
+  const ps = Services.prompt;
+  const cand = orphan.candidate;
+  let text = getString("cleanup-ask-doc", {
+    args: {
+      name: orphan.entry.visibleName,
+      index: index + 1,
+      total,
+      modified: new Date(
+        Number(orphan.entry.lastModified) || orphan.entry.lastModified,
+      ).toLocaleString(),
+    },
+  });
+  if (cand) {
+    const parent = cand.parentItem;
+    text +=
+      "\n\n" +
+      getString(
+        orphan.reason === "record"
+          ? "cleanup-ask-match-record"
+          : "cleanup-ask-match-title",
+        {
+          args: {
+            title: parent?.getDisplayTitle() ?? cand.getDisplayTitle(),
+            library: Zotero.Libraries.getName(cand.libraryID),
+            matches: orphan.matches ?? 1,
+          },
+        },
+      );
+  } else {
+    text += "\n\n" + getString("cleanup-ask-no-match");
+  }
+
+  // Button 1 is the default and also what Escape/close returns → Ignore.
+  let flags =
+    ps.BUTTON_POS_0 * ps.BUTTON_TITLE_IS_STRING +
+    ps.BUTTON_POS_1 * ps.BUTTON_TITLE_IS_STRING +
+    ps.BUTTON_POS_1_DEFAULT;
+  if (cand) flags += ps.BUTTON_POS_2 * ps.BUTTON_TITLE_IS_STRING;
+  const stop = { value: false };
+  const button = ps.confirmEx(
+    win as any,
+    getString("cleanup-title"),
+    text,
+    flags,
+    getString("cleanup-btn-delete"),
+    getString("cleanup-btn-ignore"),
+    cand ? getString("cleanup-btn-relink") : "",
+    getString("cleanup-ignore-rest"),
+    stop,
+  );
+  const decision: cleanup.Decision =
+    button === 0 ? "delete" : button === 2 && cand ? "relink" : "ignore";
+  return { decision, stop: stop.value };
+}
+
+/**
+ * Review the reMarkable sync folder for documents not linked to a tagged item.
+ * Asks per document (relink / move to trash / ignore), then confirms once more
+ * before changing anything.
+ */
+export async function runCleanup(win: Window): Promise<void> {
+  if (notConnected()) return;
+  const pw = newProgress();
+  pw.changeLine({ text: getString("cleanup-scanning"), progress: 0 });
+  try {
+    const api = await client.getApi();
+    const { orphans, folderFound } = await cleanup.findOrphans(api);
+    if (!folderFound || orphans.length === 0) {
+      pw.changeLine({
+        progress: 100,
+        text: getString(folderFound ? "cleanup-none" : "cleanup-no-folder"),
+      });
+      pw.startCloseTimer(4000);
+      return;
+    }
+    pw.close();
+
+    const decisions: { orphan: cleanup.Orphan; decision: cleanup.Decision }[] =
+      [];
+    for (let i = 0; i < orphans.length; i++) {
+      const { decision, stop } = askOrphan(win, orphans[i], i, orphans.length);
+      if (decision !== "ignore")
+        decisions.push({ orphan: orphans[i], decision });
+      if (stop) break;
+    }
+    const trash = decisions.filter((d) => d.decision === "delete").length;
+    const relink = decisions.length - trash;
+    if (decisions.length === 0) return;
+
+    // Final confirmation, defaulting to Cancel.
+    const ps = ztoolkit.getGlobal("Services").prompt;
+    const ok = ps.confirmEx(
+      win as any,
+      getString("cleanup-title"),
+      getString("cleanup-confirm", { args: { trash, relink } }),
+      ps.BUTTON_POS_0 * ps.BUTTON_TITLE_IS_STRING +
+        ps.BUTTON_POS_1 * ps.BUTTON_TITLE_CANCEL +
+        ps.BUTTON_POS_1_DEFAULT,
+      getString("cleanup-btn-apply"),
+      "",
+      "",
+      "",
+      { value: false },
+    );
+    if (ok !== 0) return;
+
+    const pw2 = newProgress();
+    const summary = await cleanup.applyDecisions(api, decisions);
+    pw2.changeLine({
+      type: summary.failed ? "fail" : "success",
+      progress: 100,
+      text: getString("cleanup-done", {
+        args: {
+          trashed: summary.trashed,
+          relinked: summary.relinked,
+          failed: summary.failed,
+        },
+      }),
+    });
+    pw2.startCloseTimer(summary.failed ? 8000 : 5000);
+    refreshStatusDots();
+  } catch (e) {
+    log("runCleanup error:", e);
+    pw.changeLine({
+      type: "fail",
+      progress: 100,
+      text: getString("sync-error", { args: { error: errMsg(e) } }),
+    });
+    pw.startCloseTimer(8000);
+  }
+}
+
 /** Repaint item-tree status dots after a membership change. */
 function refreshStatusDots(): void {
   for (const win of Zotero.getMainWindows()) {
@@ -399,6 +545,14 @@ function registerToolsMenu(win: Window): void {
       "tools-clearpulled",
       getString("menuitem-clear-pulled"),
       () => void runClearPulled(),
+    ),
+  );
+  toolsPopup.appendChild(
+    makeMenuitem(
+      doc,
+      "tools-cleanup",
+      getString("menuitem-cleanup"),
+      () => void runCleanup(win),
     ),
   );
 }

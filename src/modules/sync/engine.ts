@@ -101,7 +101,7 @@ export function pdfAttachmentsOf(items: Zotero.Item[]): Zotero.Item[] {
   return out;
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const subtle = (globalThis as any).crypto.subtle;
   const digest: ArrayBuffer = await subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest))
@@ -109,7 +109,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
-function displayNameFor(att: Zotero.Item): string {
+export function displayNameFor(att: Zotero.Item): string {
   const parent = att.parentItem;
   const title = parent ? parent.getDisplayTitle() : "";
   return (title || att.attachmentFilename || "Untitled").trim();

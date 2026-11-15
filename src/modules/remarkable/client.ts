@@ -131,6 +131,14 @@ export async function findById(
   return items.find((e) => e.id === id);
 }
 
+/** Move a document to the reMarkable trash (recoverable on the device). */
+export async function trashDoc(
+  api: RemarkableApi,
+  hash: string,
+): Promise<void> {
+  await withGenerationRetry(() => api.move(hash, "trash"));
+}
+
 /** Delete a document by its current hash. */
 export async function deleteDoc(
   api: RemarkableApi,
