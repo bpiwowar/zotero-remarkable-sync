@@ -1,62 +1,77 @@
-// Polyfills for language features rmapi-js (v14+) uses that Zotero's Gecko
-// (Firefox 115 ESR for Zotero 7) lacks. Must be imported before anything that
-// imports rmapi-js: its classes define `[Symbol.asyncDispose]` methods when the
-// module is evaluated.
+// Polyfills for explicit resource management (Symbol.asyncDispose,
+// AsyncDisposableStack), which rmapi-js (v14+) uses and Firefox only ships from
+// version 141: Zotero 8 to 10 run on Firefox 140 ESR. Zotero 11 (Firefox 153)
+// has them natively. Must be imported before anything that imports rmapi-js:
+// its classes define `[Symbol.asyncDispose]` methods when the module is
+// evaluated. `npm run test:polyfills` checks them.
 
 const S = Symbol as any;
 // Same fallback esbuild's and TypeScript's `using` helpers look up.
 if (!S.asyncDispose) S.asyncDispose = Symbol.for("Symbol.asyncDispose");
 if (!S.dispose) S.dispose = Symbol.for("Symbol.dispose");
 
-const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const B64URL = B64.slice(0, 62) + "-_";
-
-interface Base64Options {
-  alphabet?: "base64" | "base64url";
-  omitPadding?: boolean;
-  lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
-}
-
-const U8 = Uint8Array as any;
-
-if (typeof U8.prototype.toBase64 !== "function") {
-  U8.prototype.toBase64 = function (
-    this: Uint8Array,
-    opts: Base64Options = {},
-  ): string {
-    const chars = opts.alphabet === "base64url" ? B64URL : B64;
-    let out = "";
-    for (let i = 0; i < this.length; i += 3) {
-      const n =
-        (this[i] << 16) | ((this[i + 1] ?? 0) << 8) | (this[i + 2] ?? 0);
-      const left = this.length - i;
-      out += chars[(n >> 18) & 63] + chars[(n >> 12) & 63];
-      out += left > 1 ? chars[(n >> 6) & 63] : opts.omitPadding ? "" : "=";
-      out += left > 2 ? chars[n & 63] : opts.omitPadding ? "" : "=";
+const G = globalThis as any;
+if (typeof G.AsyncDisposableStack !== "function") {
+  type Cleanup = () => unknown;
+  // Minimal AsyncDisposableStack: disposes in reverse order, rethrowing the
+  // first error after running every cleanup.
+  class AsyncDisposableStackPolyfill {
+    #stack: Cleanup[] = [];
+    #disposed = false;
+    get disposed() {
+      return this.#disposed;
     }
-    return out;
-  };
-}
-
-if (typeof U8.fromBase64 !== "function") {
-  U8.fromBase64 = function (text: string, opts: Base64Options = {}) {
-    const chars = opts.alphabet === "base64url" ? B64URL : B64;
-    const clean = text.replace(/[\s=]/g, "");
-    const out: number[] = [];
-    let bits = 0;
-    let acc = 0;
-    for (const c of clean) {
-      const v = chars.indexOf(c);
-      if (v < 0) throw new SyntaxError(`invalid base64 character "${c}"`);
-      acc = ((acc << 6) | v) & 0xffffff;
-      bits += 6;
-      if (bits >= 8) {
-        bits -= 8;
-        out.push((acc >> bits) & 0xff);
+    #check() {
+      if (this.#disposed) throw new ReferenceError("stack already disposed");
+    }
+    use<T>(value: T): T {
+      this.#check();
+      if (value !== null && value !== undefined) {
+        const v = value as any;
+        const fn = v[S.asyncDispose] ?? v[S.dispose];
+        if (typeof fn !== "function") throw new TypeError("not disposable");
+        this.#stack.push(() => fn.call(v));
       }
+      return value;
     }
-    return new Uint8Array(out);
-  };
+    adopt<T>(value: T, onDispose: (v: T) => unknown): T {
+      this.#check();
+      this.#stack.push(() => onDispose(value));
+      return value;
+    }
+    defer(onDispose: () => unknown): void {
+      this.#check();
+      this.#stack.push(onDispose);
+    }
+    move(): AsyncDisposableStackPolyfill {
+      this.#check();
+      const next = new AsyncDisposableStackPolyfill();
+      next.#stack = this.#stack;
+      this.#stack = [];
+      this.#disposed = true;
+      return next;
+    }
+    async disposeAsync(): Promise<void> {
+      if (this.#disposed) return;
+      this.#disposed = true;
+      let failed = false;
+      let error: unknown;
+      for (const fn of this.#stack.reverse()) {
+        try {
+          await fn();
+        } catch (e) {
+          if (!failed) error = e;
+          failed = true;
+        }
+      }
+      this.#stack = [];
+      if (failed) throw error;
+    }
+    [S.asyncDispose]() {
+      return this.disposeAsync();
+    }
+  }
+  G.AsyncDisposableStack = AsyncDisposableStackPolyfill;
 }
 
 export {};

@@ -30,6 +30,7 @@
     "test:parser": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && node test/rmlines.verify.mjs",
     "test:writer": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && esbuild src/modules/remarkable/rmwrite.ts --bundle --format=esm --outfile=.scaffold/rmwrite.mjs --log-level=error && node test/rmwrite.verify.mjs",
     "test:scene": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && esbuild src/modules/remarkable/rmwrite.ts --bundle --format=esm --outfile=.scaffold/rmwrite.mjs --log-level=error && node test/rmscene.verify.mjs",
+    "test:polyfills": "esbuild src/utils/polyfills.ts --bundle --format=esm --outfile=.scaffold/polyfills.mjs --log-level=error && node test/polyfills.verify.mjs",
     "update-deps": "npm update --save",
     "prepare": "husky",
     "devtest": "esbuild scripts/devtest.ts --bundle --platform=node --format=esm --outfile=.scaffold/devtest.mjs --log-level=error && node .scaffold/devtest.mjs"

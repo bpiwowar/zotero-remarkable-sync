@@ -12,7 +12,7 @@
 > modifies annotations already on the device. Turn it off in the plugin
 > preferences to push Zotero annotations back to the device (the riskier path).
 
-A [Zotero 7](https://www.zotero.org/) plugin (supports up to Zotero 10) that keeps your
+A [Zotero](https://www.zotero.org/) plugin (Zotero 8 to 10) that keeps your
 PDFs **and annotations** in sync with a [reMarkable](https://remarkable.com/) tablet.
 
 - **Tag-driven** — items tagged `@remarkable` (configurable) are pushed to the device.
@@ -43,8 +43,8 @@ npm start          # launch Zotero with hot-reload
 npm run build      # build the .xpi and type-check
 npm test           # run unit tests (in Zotero)
 npm run lint:fix   # format + lint
-npm run test:parser && npm run test:writer && npm run test:scene
-                   # offline checks of the .rm reader/writer
+npm run test:parser && npm run test:writer && npm run test:scene && npm run test:polyfills
+                   # offline checks of the .rm reader/writer and polyfills
 RM_DEVICE_TOKEN=... RM_SOURCE="<title prefix>" npm run devtest
                    # live round trip on the cloud; writes only in "zotrem-dev"
 ```
