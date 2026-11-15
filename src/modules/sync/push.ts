@@ -16,23 +16,23 @@ import {
   mapPdfPages,
   pdfIndexByPageId,
   type PageRef,
-} from "../remarkable/rmdoc";
-import { parseRmPage } from "../remarkable/rmlines";
-import type { RmStroke, RmHighlight, CrdtId } from "../remarkable/rmlines";
+} from "remarkable-annotations";
+import { parseRmPage } from "remarkable-annotations";
+import type { RmStroke, RmHighlight, CrdtId } from "remarkable-annotations";
 import {
   rebuildPage,
   splitStructure,
   blankStructure,
-} from "../remarkable/rmwrite";
+} from "remarkable-annotations";
 import { zoteroToRm } from "../remarkable/colors";
 import {
   readPdfPageSizes,
   pageSizeAt,
-  zoteroRectToRm,
-  zoteroPathToRm,
+  pdfRectToRm,
+  pdfPathToRm,
   pdfWidthToRm,
   type PdfPageSize,
-} from "../remarkable/geometry";
+} from "remarkable-annotations";
 import {
   allRecords,
   setRecord,
@@ -82,13 +82,13 @@ function annotationToRm(
       out.highlights.push({
         text: i === 0 ? text : "",
         colorIndex: index,
-        rects: [zoteroRectToRm(r as [number, number, number, number], size)],
+        rects: [pdfRectToRm(r as [number, number, number, number], size)],
       });
     });
   } else if (type === "ink") {
     const width = pdfWidthToRm(pos.width ?? 1);
     for (const path of pos.paths ?? []) {
-      const points = zoteroPathToRm(path, size);
+      const points = pdfPathToRm(path, size);
       if (points.length) {
         out.strokes.push({
           tool: 17, // fineliner

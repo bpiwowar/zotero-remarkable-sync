@@ -8,14 +8,14 @@
 // the user added to a pulled annotation (see applyAnnotations).
 
 import {
-  rectToZotero,
+  rmRectToPdf,
   strokeToPath,
   inkWidth,
   pageSizeAt,
   type PdfPageSize,
-} from "../remarkable/geometry";
-import type { RmDocPage, RmPageTags } from "../remarkable/rmdoc";
-import type { RmHighlight, RmStroke } from "../remarkable/rmlines";
+} from "remarkable-annotations";
+import type { RmDocPage, RmPageTags } from "remarkable-annotations";
+import type { RmHighlight, RmStroke } from "remarkable-annotations";
 import { rmToZoteroHex } from "../remarkable/colors";
 import { log, errMsg } from "../../utils/log";
 import type { PulledSource } from "./state";
@@ -293,7 +293,7 @@ function buildHighlight(
   hl: RmHighlight,
   size: PdfPageSize,
 ): Pending | null {
-  const rects = hl.rects.map((r) => rectToZotero(r, size));
+  const rects = hl.rects.map((r) => rmRectToPdf(r, size));
   if (!rects.length) return null;
   log(
     `pull HL colorIndex=${hl.colorIndex} rgba=${JSON.stringify(hl.rgba)} text=${JSON.stringify(

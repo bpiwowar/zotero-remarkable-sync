@@ -2,7 +2,7 @@
 // parsed scene and serializes it again. Check that this round trip is
 // byte-exact for the fixtures and for pages produced by our writer.
 //
-// Run via `npm run test:scene` (bundles first).
+// Run via `npm run test:annotations` (bundles first).
 
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -12,11 +12,11 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const { parseRmScene, serializeRmScene } = await import(
-  join(root, "node_modules/rmapi-js/dist/rm6.js")
+  join(root, ".scaffold/index.mjs")
 );
-const { parseRmPage } = await import(join(root, ".scaffold/rmlines.mjs"));
+const { parseRmPage } = await import(join(root, ".scaffold/index.mjs"));
 const { rebuildPage, blankStructure } = await import(
-  join(root, ".scaffold/rmwrite.mjs")
+  join(root, ".scaffold/index.mjs")
 );
 
 const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);

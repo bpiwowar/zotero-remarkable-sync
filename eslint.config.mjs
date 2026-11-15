@@ -14,7 +14,7 @@ export default zotero({
     },
     {
       // Standalone Node test harnesses (run outside Zotero).
-      files: ["test/**/*.mjs"],
+      files: ["test/**/*.mjs", "packages/*/test/**/*.mjs"],
       languageOptions: {
         globals: {
           console: "readonly",

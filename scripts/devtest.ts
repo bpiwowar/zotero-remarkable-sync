@@ -16,15 +16,12 @@ import "../src/utils/polyfills";
   Promise: { delay: (ms: number) => new Promise((r) => setTimeout(r, ms)) },
 };
 import { remarkable, HashNotFoundError } from "rmapi-js";
-import {
-  parseRmScene,
-  serializeRmScene,
-} from "../src/modules/remarkable/rmscene";
+import { parseRmScene, serializeRmScene } from "remarkable-annotations";
 import type { RemarkableApi, ItemRef } from "rmapi-js";
 import * as client from "../src/modules/remarkable/client";
-import { fetchAnnotations, mapPdfPages } from "../src/modules/remarkable/rmdoc";
-import { parseRmPage } from "../src/modules/remarkable/rmlines";
-import { rebuildPage } from "../src/modules/remarkable/rmwrite";
+import { fetchAnnotations, mapPdfPages } from "remarkable-annotations";
+import { parseRmPage } from "remarkable-annotations";
+import { rebuildPage } from "remarkable-annotations";
 
 const DEV = "zotrem-dev";
 let failures = 0;

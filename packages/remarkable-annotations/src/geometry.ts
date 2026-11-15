@@ -1,5 +1,5 @@
-// Map reMarkable scene coordinates onto PDF points (Zotero annotation space:
-// origin bottom-left, units = PDF points).
+// Map reMarkable scene coordinates onto PDF points (origin bottom-left, as in
+// PDF user space and Zotero annotations; units = PDF points).
 //
 // reMarkable renders a PDF at a fixed device resolution (RM_DPI) and stores
 // annotation coordinates in those device pixels, with x measured from the page
@@ -8,7 +8,7 @@
 //
 //   pdfX     = rmX * (72/RM_DPI) + pageWidth/2
 //   pdfYtop  = rmY * (72/RM_DPI)
-//   zoteroY  = pageHeight - pdfYtop      (flip to bottom-left origin)
+//   pdfY     = pageHeight - pdfYtop      (flip to bottom-left origin)
 //
 // Verified against a real reMarkable export: highlight rects matched the baked
 // PDF vectors to <1pt. RM_DPI is the single calibration knob (226 = rM2 / rMPP).
@@ -34,7 +34,7 @@ const PT_PER_RM = 72 / RM_DPI;
 // export: highlighter point-width 120 -> 11.34pt, fineliner 16 -> 1.51pt.
 const RM_WIDTH_FACTOR = 0.0945;
 
-/** Convert a reMarkable pen width to a Zotero ink width in PDF points. */
+/** Convert a reMarkable pen width to an ink width in PDF points. */
 export function inkWidth(rmPointWidth: number): number {
   return Math.max(0.5, Math.round(rmPointWidth * RM_WIDTH_FACTOR * 100) / 100);
 }
@@ -50,8 +50,8 @@ export function rmToPdf(
   return [px, (page.y0 ?? 0) + page.height - pyFromTop];
 }
 
-/** Convert a reMarkable highlight rectangle to a Zotero rect [x1,y1,x2,y2]. */
-export function rectToZotero(
+/** Convert a reMarkable highlight rectangle to a PDF rect [x1,y1,x2,y2]. */
+export function rmRectToPdf(
   r: RmRect,
   page: PdfPageSize,
 ): [number, number, number, number] {
@@ -65,7 +65,7 @@ export function rectToZotero(
   ];
 }
 
-// --- inverse direction (Zotero PDF points -> reMarkable units) --------------
+// --- inverse direction (PDF points -> reMarkable units) --------------
 
 /** Inverse of rmToPdf: PDF point [x,y] (bottom-left) -> reMarkable (x, y). */
 export function pdfToRm(
@@ -78,8 +78,8 @@ export function pdfToRm(
   return [rmX, rmY];
 }
 
-/** Inverse of rectToZotero: Zotero rect [x1,y1,x2,y2] -> reMarkable RmRect. */
-export function zoteroRectToRm(
+/** Inverse of rmRectToPdf: PDF rect [x1,y1,x2,y2] -> reMarkable RmRect. */
+export function pdfRectToRm(
   rect: [number, number, number, number],
   page: PdfPageSize,
 ): RmRect {
@@ -88,8 +88,8 @@ export function zoteroRectToRm(
   return { x: ax, y: ay, w: bx - ax, h: by - ay };
 }
 
-/** Inverse of strokeToPath: flat Zotero path -> reMarkable points. */
-export function zoteroPathToRm(path: number[], page: PdfPageSize): RmPoint[] {
+/** Inverse of strokeToPath: flat PDF path -> reMarkable points. */
+export function pdfPathToRm(path: number[], page: PdfPageSize): RmPoint[] {
   const pts: RmPoint[] = [];
   for (let i = 0; i + 1 < path.length; i += 2) {
     const [x, y] = pdfToRm(path[i], path[i + 1], page);
@@ -103,7 +103,7 @@ export function pdfWidthToRm(pdfWidth: number): number {
   return Math.max(1, Math.round(pdfWidth / 0.0945));
 }
 
-/** Convert a stroke's points to a flat Zotero ink path [x1,y1,x2,y2,...]. */
+/** Convert a stroke's points to a flat PDF ink path [x1,y1,x2,y2,...]. */
 export function strokeToPath(points: RmPoint[], page: PdfPageSize): number[] {
   const out: number[] = [];
   for (const p of points) {

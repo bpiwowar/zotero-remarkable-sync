@@ -5,8 +5,8 @@ import { getPref } from "../../utils/prefs";
 import { ensureNetworkGlobals } from "../../utils/globals";
 import { log, errMsg } from "../../utils/log";
 import * as client from "../remarkable/client";
-import { fetchAnnotations } from "../remarkable/rmdoc";
-import { readPdfPageSizes, pageSizeAt } from "../remarkable/geometry";
+import { fetchAnnotations } from "remarkable-annotations";
+import { readPdfPageSizes, pageSizeAt } from "remarkable-annotations";
 import {
   getRecord,
   getRecordCached,
@@ -18,7 +18,7 @@ import {
   type SyncRecord,
 } from "./state";
 import type { ItemRef, RemarkableApi } from "rmapi-js";
-import type { RmDocPage } from "../remarkable/rmdoc";
+import type { RmDocPage } from "remarkable-annotations";
 import { keyedAuthors } from "../remarkable/zkey";
 import { applyAnnotations, existingSig } from "./annotations";
 

@@ -27,20 +27,18 @@
     "lint:fix": "prettier --write . && eslint . --fix",
     "release": "zotero-plugin release",
     "test": "zotero-plugin test",
-    "test:parser": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && node test/rmlines.verify.mjs",
-    "test:writer": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && esbuild src/modules/remarkable/rmwrite.ts --bundle --format=esm --outfile=.scaffold/rmwrite.mjs --log-level=error && node test/rmwrite.verify.mjs",
-    "test:scene": "esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && esbuild src/modules/remarkable/rmwrite.ts --bundle --format=esm --outfile=.scaffold/rmwrite.mjs --log-level=error && node test/rmscene.verify.mjs",
     "test:polyfills": "esbuild src/utils/polyfills.ts --bundle --format=esm --outfile=.scaffold/polyfills.mjs --log-level=error && node test/polyfills.verify.mjs",
     "update-deps": "npm update --save",
     "prepare": "husky",
     "devtest": "esbuild scripts/devtest.ts --bundle --platform=node --format=esm --outfile=.scaffold/devtest.mjs --log-level=error && node .scaffold/devtest.mjs",
-    "test:pdfpages": "esbuild src/modules/remarkable/geometry.ts --bundle --format=esm --outfile=.scaffold/geometry.mjs --log-level=error && node test/pdfpages.verify.mjs",
-    "test:shared": "esbuild src/modules/remarkable/zkey.ts --bundle --format=esm --outfile=.scaffold/zkey.mjs --log-level=error && esbuild src/modules/remarkable/rmlines.ts --bundle --format=esm --outfile=.scaffold/rmlines.mjs --log-level=error && esbuild src/modules/remarkable/rmwrite.ts --bundle --format=esm --outfile=.scaffold/rmwrite.mjs --log-level=error && esbuild src/modules/sync/state.ts --bundle --format=esm --outfile=.scaffold/state.mjs --log-level=error && node test/shared.verify.mjs"
+    "test:shared": "esbuild src/modules/remarkable/zkey.ts --bundle --format=esm --outfile=.scaffold/zkey.mjs --log-level=error && esbuild packages/remarkable-annotations/src/index.ts --bundle --format=esm --outfile=.scaffold/annotations.mjs --log-level=error && esbuild src/modules/sync/state.ts --bundle --format=esm --outfile=.scaffold/state.mjs --log-level=error && node test/shared.verify.mjs",
+    "test:annotations": "npm test -w remarkable-annotations"
   },
   "dependencies": {
     "fflate": "^0.8.3",
     "rmapi-js": "^14.4.0",
-    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+    "zotero-plugin-toolkit": "^5.1.0-beta.13",
+    "remarkable-annotations": "*"
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
@@ -75,5 +73,8 @@
         }
       }
     ]
-  }
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

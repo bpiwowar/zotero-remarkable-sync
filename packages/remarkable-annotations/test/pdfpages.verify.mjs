@@ -1,7 +1,7 @@
 // Verifies PDF page-size extraction (geometry.readPdfPageSizes) on synthetic
 // PDFs: page dictionaries hidden in a compressed object stream, inherited and
 // indirect MediaBox, CropBox with a non-zero origin. Run via
-// `npm run test:pdfpages` (bundles first).
+// `npm run test:annotations` (bundles first).
 
 import assert from "node:assert/strict";
 import { zlibSync } from "fflate";
@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const { readPdfPageSizes, rmToPdf, pdfToRm } = await import(
-  join(here, "..", ".scaffold/geometry.mjs")
+  join(here, "..", ".scaffold/index.mjs")
 );
 
 const enc = (s) => new Uint8Array([...s].map((c) => c.charCodeAt(0)));

@@ -1,10 +1,10 @@
 // Thin wrapper around rmapi-js, adapting it to the plugin: credential storage
-// in prefs, folder resolution by path, uploads with the full page list, and
-// page writes from raw `.rm` bytes. rmapi-js retries generation conflicts.
+// in prefs and logging. Document operations live in remarkable-annotations.
 
 import { register, remarkable } from "rmapi-js";
-import type { DocumentContent, Entry, ItemRef, RemarkableApi } from "rmapi-js";
-import { parseRmScene } from "./rmscene";
+import type { Entry, ItemRef, RemarkableApi } from "rmapi-js";
+import * as rm from "remarkable-annotations";
+import type { UploadPdfOptions } from "remarkable-annotations";
 import { getPref, setPref, clearPref } from "../../utils/prefs";
 import { ensureNetworkGlobals } from "../../utils/globals";
 import { log } from "../../utils/log";
@@ -53,105 +53,23 @@ export function resetApi(): void {
   cachedApi = null;
 }
 
-/**
- * Resolve a "/"-separated folder path to a collection id on the reMarkable,
- * creating any missing folders along the way. Returns "" for the root.
- */
-export async function ensureFolder(
-  api: RemarkableApi,
-  path: string,
-): Promise<string> {
-  const parts = path
-    .split("/")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length === 0) return "";
+export { ensureFolder, putPages } from "remarkable-annotations";
 
-  const items = await api.listItems(true);
-  let parent = "";
-  for (const name of parts) {
-    const found = items.find(
-      (e) =>
-        e.type === "CollectionType" &&
-        e.visibleName === name &&
-        (e.parent ?? "") === parent,
-    );
-    if (found) {
-      parent = found.id;
-    } else {
-      const created = await api.putFolder(name, { parent });
-      parent = created.id;
-    }
-  }
-  return parent;
-}
-
-function uuid4(): string {
-  const c = (globalThis as any).crypto;
-  if (typeof c?.randomUUID === "function") return c.randomUUID();
-  return (Services as any).uuid.generateUUID().toString().slice(1, -1);
-}
-
-/**
- * Upload a PDF into a folder, returning the new document's id and hash.
- *
- * rmapi-js's `putPdf` writes a placeholder `.content` claiming a single page;
- * the device only writes the real page list when the document is first opened.
- * Until then, annotations cannot be mapped to pages. When the page count is
- * known we follow up with the full page list (one page uuid per PDF page) and
- * the page tags, so annotations can be pushed right away.
- */
+/** Upload a PDF into a folder (see remarkable-annotations' `uploadPdf`). */
 export async function uploadPdf(
   api: RemarkableApi,
   visibleName: string,
   bytes: Uint8Array,
   folderId: string,
-  opts: {
-    tags?: string[];
-    pageCount?: number;
-    /** page tags to set, by 0-based PDF page index (needs pageCount) */
-    pageTags?: Record<string, string[]>;
-  } = {},
+  opts: UploadPdfOptions = {},
 ): Promise<ItemRef> {
-  const { tags = [], pageCount, pageTags = {} } = opts;
-  const ref = await api.putPdf(visibleName, bytes, { parent: folderId, tags });
-  if (!pageCount || pageCount < 1) {
-    log(`uploadPdf: page count unknown for "${visibleName}", one-page list`);
-    return ref;
-  }
-  const pages = Array.from({ length: pageCount }, () => uuid4());
-  const now = Date.now();
-  const updated = await api.updateDocument(ref, {
-    originalPageCount: pages.length,
-    pageCount: pages.length,
-    pages,
-    redirectionPageMap: pages.map((_, i) => i),
-    pageTags: Object.entries(pageTags).flatMap(([idx, names]) => {
-      const pageId = pages[Number(idx)];
-      return pageId
-        ? names.map((name) => ({ name, pageId, timestamp: now }))
-        : [];
-    }),
-  } as Partial<DocumentContent>);
-  log(`uploadPdf: "${visibleName}" -> ${ref.id} (${pages.length} page(s))`);
-  return updated;
-}
-
-/**
- * Replace the `.rm` files of some pages of a document in one commit. Fails with
- * rmapi-js's HashNotFoundError if the document changed since `ref` was read,
- * so pages computed from an older version never overwrite newer ink.
- */
-export async function putPages(
-  api: RemarkableApi,
-  ref: ItemRef,
-  pages: Map<string, Uint8Array>,
-): Promise<ItemRef> {
-  if (pages.size === 0) return ref;
-  const scenes = new Map(
-    [...pages].map(([pageId, bytes]) => [pageId, parseRmScene(bytes)]),
+  const ref = await rm.uploadPdf(api, visibleName, bytes, folderId, opts);
+  log(
+    opts.pageCount
+      ? `uploadPdf: "${visibleName}" -> ${ref.id} (${opts.pageCount} page(s))`
+      : `uploadPdf: page count unknown for "${visibleName}", one-page list`,
   );
-  return api.putRmPages(ref, scenes);
+  return ref;
 }
 
 /** Look up an entry by its document id (uuid). */

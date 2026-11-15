@@ -1,0 +1,20 @@
+{
+  "name": "remarkable-annotations",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read and write reMarkable PDF annotations (strokes and highlights) on top of rmapi-js",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "bundle": "esbuild src/index.ts --bundle --format=esm --outfile=.scaffold/index.mjs --log-level=error",
+    "test": "npm run bundle && node test/rmlines.verify.mjs && node test/rmwrite.verify.mjs && node test/rmscene.verify.mjs && node test/pdfpages.verify.mjs",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "rmapi-js": "^14.4.0"
+  }
+}

@@ -2,7 +2,7 @@
 // deps), so we bundle it with esbuild and run it in Node against fixtures taken
 // from rmscene, asserting the expected strokes/highlights.
 //
-// Run via `npm run test:parser` (bundles first). Ground truth was produced with
+// Run via `npm run test:annotations` (bundles first). Ground truth was produced with
 // rmscene (github.com/ricklupton/rmscene).
 
 import assert from "node:assert/strict";
@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const { parseRmPage } = await import(join(root, ".scaffold/rmlines.mjs"));
+const { parseRmPage } = await import(join(root, ".scaffold/index.mjs"));
 
 const read = (name) =>
   new Uint8Array(readFileSync(join(root, "test/fixtures/rm", name)));

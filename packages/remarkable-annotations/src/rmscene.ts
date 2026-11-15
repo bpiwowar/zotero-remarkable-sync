@@ -3,7 +3,8 @@
 // byte for byte (test/rmscene.verify.mjs).
 //
 // Neither module is exported from the package entry, so they are imported by
-// path.
+// path (from the workspace root's node_modules, where npm hoists rmapi-js).
+// Publishing this package would need them exported upstream first.
 
 import {
   rmBrushCode,

@@ -1,7 +1,7 @@
 // Round-trip verification for the .rm v6 writer: encode strokes/highlights with
 // rmwrite, parse them back with rmlines, and assert the data survives.
 //
-// Run via `npm run test:writer` (bundles first).
+// Run via `npm run test:annotations` (bundles first).
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -10,9 +10,9 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const { parseRmPage } = await import(join(root, ".scaffold/rmlines.mjs"));
+const { parseRmPage } = await import(join(root, ".scaffold/index.mjs"));
 const { rebuildPage, splitStructure, blankStructure } = await import(
-  join(root, ".scaffold/rmwrite.mjs")
+  join(root, ".scaffold/index.mjs")
 );
 
 // Shorthands over rebuildPage.

@@ -11,9 +11,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { keyToUuid, uuidToKey, keyedAuthors } = await import(
   join(root, ".scaffold/zkey.mjs")
 );
-const { parseRmPage } = await import(join(root, ".scaffold/rmlines.mjs"));
+const { parseRmPage } = await import(join(root, ".scaffold/annotations.mjs"));
 const { rebuildPage, blankStructure } = await import(
-  join(root, ".scaffold/rmwrite.mjs")
+  join(root, ".scaffold/annotations.mjs")
 );
 const { noteWith, parseNote } = await import(join(root, ".scaffold/state.mjs"));
 
