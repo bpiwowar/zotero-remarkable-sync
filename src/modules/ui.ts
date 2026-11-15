@@ -7,6 +7,7 @@
 import { config } from "../../package.json";
 import { getString, getLocaleID } from "../utils/locale";
 import { log, errMsg } from "../utils/log";
+import { getPref } from "../utils/prefs";
 import * as engine from "./sync/engine";
 import { pushAnnotations } from "./sync/push";
 import * as client from "./remarkable/client";
@@ -323,6 +324,78 @@ export async function runOverwriteFromRemarkable(
 }
 
 /**
+ * Ask how to remove items from sync: delete their reMarkable copies or keep
+ * them, optionally pulling their annotations first. Null when cancelled.
+ */
+function askUnsync(
+  win: Window,
+  count: number,
+): { deleteRemote: boolean; pullFirst: boolean } | null {
+  const ps = ztoolkit.getGlobal("Services").prompt;
+  // Button 1 (Cancel) is what Escape/close returns; the default button follows
+  // the deleteOnUnsync pref.
+  const flags =
+    ps.BUTTON_POS_0 * ps.BUTTON_TITLE_IS_STRING +
+    ps.BUTTON_POS_1 * ps.BUTTON_TITLE_CANCEL +
+    ps.BUTTON_POS_2 * ps.BUTTON_TITLE_IS_STRING +
+    (getPref("deleteOnUnsync")
+      ? ps.BUTTON_POS_0_DEFAULT
+      : ps.BUTTON_POS_2_DEFAULT);
+  const pull = { value: true };
+  const button = ps.confirmEx(
+    win as any,
+    getString("unsync-title"),
+    getString("unsync-ask", { args: { count } }),
+    flags,
+    getString("unsync-btn-delete"),
+    "",
+    getString("unsync-btn-keep"),
+    getString("unsync-pull-first"),
+    pull,
+  );
+  if (button === 1) return null;
+  return { deleteRemote: button === 0, pullFirst: pull.value };
+}
+
+/** "Remove from sync" with confirmation (and optional final pull). */
+export async function runRemoveFromSync(
+  win: Window,
+  items: Zotero.Item[],
+): Promise<void> {
+  const synced = items.filter((it) => engine.isItemSynced(it));
+  if (synced.length === 0) return;
+  try {
+    if (!client.isConnected()) {
+      await engine.removeFromSync(synced, { deleteRemote: false });
+      return;
+    }
+    const choice = askUnsync(win, synced.length);
+    if (!choice) return;
+    const pw = choice.pullFirst ? newProgress() : null;
+    const progress = pw
+      ? (text: string, pct: number) => pw.changeLine({ progress: pct, text })
+      : undefined;
+    try {
+      await engine.removeFromSync(synced, { ...choice, progress });
+      pw?.changeLine({ progress: 100, text: getString("unsync-done") });
+      pw?.startCloseTimer(3000);
+    } catch (e) {
+      pw?.changeLine({
+        type: "fail",
+        progress: 100,
+        text: getString("sync-error", { args: { error: errMsg(e) } }),
+      });
+      pw?.startCloseTimer(8000);
+      throw e;
+    }
+  } catch (e) {
+    log("removeFromSync error:", e);
+  } finally {
+    refreshStatusDots();
+  }
+}
+
+/**
  * Ask, for one untracked device document, what to do with it. Ignore is the
  * default (Enter / Escape / closing the dialog). `stop` is set when the user
  * ticked "ignore all remaining".
@@ -586,10 +659,7 @@ function registerContextMenu(win: Window): void {
     "remove",
     getString("menuitem-remove-from-sync"),
     () => {
-      engine
-        .removeFromSync(selectedRegularItems(win))
-        .then(() => refreshStatusDots())
-        .catch((e) => log("removeFromSync error:", e));
+      void runRemoveFromSync(win, selectedRegularItems(win));
     },
   );
   const ovrZotero = makeMenuitem(
@@ -705,7 +775,7 @@ function renderSection(
     : getString("menuitem-add-to-sync");
   toggle.addEventListener("click", async () => {
     try {
-      if (synced) await engine.removeFromSync([item]);
+      if (synced) await runRemoveFromSync(doc.defaultView!, [item]);
       else await engine.addToSync([item]);
       renderSection(body, item, doc);
     } catch (e) {

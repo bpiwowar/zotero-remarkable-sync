@@ -9,6 +9,7 @@ import { fetchAnnotations } from "../remarkable/rmdoc";
 import { readPdfPageSizes, pageSizeAt } from "../remarkable/geometry";
 import {
   getRecord,
+  getRecordCached,
   setRecord,
   removeRecord,
   allRecords,
@@ -463,12 +464,50 @@ export async function addToSync(items: Zotero.Item[]): Promise<void> {
 }
 
 /**
- * Remove the sync tag from the given items. If `deleteOnUnsync` is set, also
- * delete the corresponding documents from the reMarkable cloud.
+ * Remove the sync tag from the given items, optionally pulling their latest
+ * annotations from the reMarkable first and/or deleting their documents there.
+ * `deleteRemote` defaults to the `deleteOnUnsync` pref. If the final pull fails
+ * for a document, it is kept on the device so no tablet annotation is lost.
  */
-export async function removeFromSync(items: Zotero.Item[]): Promise<void> {
+export async function removeFromSync(
+  items: Zotero.Item[],
+  opts: {
+    deleteRemote?: boolean;
+    pullFirst?: boolean;
+    progress?: ProgressFn;
+  } = {},
+): Promise<void> {
   const tag = getSyncTag();
-  const deleteRemote = !!getPref("deleteOnUnsync");
+  const deleteRemote = opts.deleteRemote ?? !!getPref("deleteOnUnsync");
+
+  const regular = items.filter((it) => it.isRegularItem());
+  const attKeys = new Set(
+    pdfAttachmentsOf(regular)
+      .filter((att) => getRecordCached(att.key))
+      .map((att) => att.key),
+  );
+
+  // Last pull, so annotations made on the tablet since the last sync are kept.
+  const keepRemote = new Set<string>();
+  if (opts.pullFirst && attKeys.size && client.isConnected()) {
+    const records = await allRecords();
+    try {
+      const pull = await pullAll(opts.progress, { onlyKeys: attKeys });
+      for (const err of pull.errors) log(`unsync: final pull error: ${err}`);
+      if (pull.failed) {
+        // Can't tell which one failed from the summary: keep them all remotely.
+        for (const k of attKeys) keepRemote.add(k);
+      }
+    } catch (e) {
+      log(`unsync: final pull failed: ${errMsg(e)}`);
+      for (const k of attKeys) keepRemote.add(k);
+    }
+    for (const k of keepRemote) {
+      log(
+        `unsync: keeping "${records[k]?.visibleName}" on device (pull failed)`,
+      );
+    }
+  }
 
   let api: Awaited<ReturnType<typeof client.getApi>> | null = null;
   if (deleteRemote && client.isConnected()) {
@@ -476,8 +515,7 @@ export async function removeFromSync(items: Zotero.Item[]): Promise<void> {
     api = await client.getApi();
   }
 
-  for (const item of items) {
-    if (!item.isRegularItem()) continue;
+  for (const item of regular) {
     if (item.hasTag(tag)) {
       item.removeTag(tag);
       await item.saveTx();
@@ -485,12 +523,16 @@ export async function removeFromSync(items: Zotero.Item[]): Promise<void> {
     for (const att of Zotero.Items.get(item.getAttachments())) {
       if (!att.isPDFAttachment()) continue;
       const record = await getRecord(att.key);
-      if (record && api) {
+      if (record && api && !keepRemote.has(att.key)) {
         try {
           const entry = await client.findById(api, record.docId);
           if (entry) await client.deleteDoc(api, entry.hash);
-        } catch {
+          log(`unsync: deleted "${record.visibleName}" from device`);
+        } catch (e) {
           // Best effort: leave the remote doc if deletion fails.
+          log(
+            `unsync: delete failed for "${record.visibleName}": ${errMsg(e)}`,
+          );
         }
       }
       await removeRecord(att.key);

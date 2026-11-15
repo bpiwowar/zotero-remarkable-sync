@@ -53,3 +53,12 @@ cleanup-done = Cleanup: { $trashed } moved to trash, { $relinked } relinked{ $fa
     [0] {""}
    *[other] , { $failed } failed
 }
+unsync-title = Remove from reMarkable sync
+unsync-ask = Stop syncing { $count ->
+    [1] this item
+   *[other] these { $count } items
+} with the reMarkable. What should happen to the copy on the reMarkable?
+unsync-btn-delete = Delete on reMarkable
+unsync-btn-keep = Keep on reMarkable
+unsync-pull-first = Pull annotations from the reMarkable first
+unsync-done = Removed from sync

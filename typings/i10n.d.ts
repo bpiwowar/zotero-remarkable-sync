@@ -64,4 +64,10 @@ export type FluentMessageId =
   | 'sync-done'
   | 'sync-error'
   | 'sync-now'
-  | 'sync-running';
+  | 'sync-running'
+  | 'unsync-ask'
+  | 'unsync-btn-delete'
+  | 'unsync-btn-keep'
+  | 'unsync-done'
+  | 'unsync-pull-first'
+  | 'unsync-title';
