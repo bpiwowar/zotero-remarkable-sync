@@ -33,9 +33,11 @@
     "test:polyfills": "esbuild src/utils/polyfills.ts --bundle --format=esm --outfile=.scaffold/polyfills.mjs --log-level=error && node test/polyfills.verify.mjs",
     "update-deps": "npm update --save",
     "prepare": "husky",
-    "devtest": "esbuild scripts/devtest.ts --bundle --platform=node --format=esm --outfile=.scaffold/devtest.mjs --log-level=error && node .scaffold/devtest.mjs"
+    "devtest": "esbuild scripts/devtest.ts --bundle --platform=node --format=esm --outfile=.scaffold/devtest.mjs --log-level=error && node .scaffold/devtest.mjs",
+    "test:pdfpages": "esbuild src/modules/remarkable/geometry.ts --bundle --format=esm --outfile=.scaffold/geometry.mjs --log-level=error && node test/pdfpages.verify.mjs"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "rmapi-js": "^14.4.0",
     "zotero-plugin-toolkit": "^5.1.0-beta.13"
   },

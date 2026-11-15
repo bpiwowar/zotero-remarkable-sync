@@ -313,7 +313,7 @@ function buildHighlight(
       type: "highlight",
       color: colorToHex(hl.colorIndex, hl.rgba),
       pageLabel: String(pageIndex + 1),
-      sortIndex: sortIndex(pageIndex, size.height - topY),
+      sortIndex: sortIndex(pageIndex, (size.y0 ?? 0) + size.height - topY),
       position: { pageIndex, rects },
       text: hl.text ?? "",
       comment: "",
@@ -356,7 +356,7 @@ function buildHighlighterStroke(
       type: "highlight",
       color: colorToHex(stroke.colorIndex, stroke.rgba),
       pageLabel: String(pageIndex + 1),
-      sortIndex: sortIndex(pageIndex, size.height - rect[3]),
+      sortIndex: sortIndex(pageIndex, (size.y0 ?? 0) + size.height - rect[3]),
       position: { pageIndex, rects: [rect] },
       text: "",
       comment: "",
@@ -407,8 +407,8 @@ function buildPageTagNote(
   names: string[],
   size: PdfPageSize,
 ): Pending {
-  const x1 = NOTE_MARGIN;
-  const y2 = size.height - NOTE_MARGIN;
+  const x1 = (size.x0 ?? 0) + NOTE_MARGIN;
+  const y2 = (size.y0 ?? 0) + size.height - NOTE_MARGIN;
   const rect = [x1, y2 - NOTE_SIZE, x1 + NOTE_SIZE, y2];
   return {
     signature: pageTagSig(pageIndex, rect[0], rect[1], names),
@@ -439,7 +439,7 @@ function buildInk(
       type: "ink",
       color: colorToHex(stroke.colorIndex, stroke.rgba),
       pageLabel: String(pageIndex + 1),
-      sortIndex: sortIndex(pageIndex, size.height - topY),
+      sortIndex: sortIndex(pageIndex, (size.y0 ?? 0) + size.height - topY),
       position: {
         pageIndex,
         paths: [path],

@@ -14,12 +14,16 @@
 // PDF vectors to <1pt. RM_DPI is the single calibration knob (226 = rM2 / rMPP).
 
 import type { RmPoint, RmRect } from "./rmlines";
+import { readPdfPageBoxes } from "./pdfpages";
 
 export interface PdfPageSize {
   /** page width in PDF points */
   width: number;
   /** page height in PDF points */
   height: number;
+  /** lower-left corner of the visible (crop) box; 0 when omitted */
+  x0?: number;
+  y0?: number;
 }
 
 /** reMarkable device resolution. The only calibration constant. */
@@ -41,9 +45,9 @@ export function rmToPdf(
   y: number,
   page: PdfPageSize,
 ): [number, number] {
-  const px = x * PT_PER_RM + page.width / 2;
+  const px = x * PT_PER_RM + (page.x0 ?? 0) + page.width / 2;
   const pyFromTop = y * PT_PER_RM;
-  return [px, page.height - pyFromTop];
+  return [px, (page.y0 ?? 0) + page.height - pyFromTop];
 }
 
 /** Convert a reMarkable highlight rectangle to a Zotero rect [x1,y1,x2,y2]. */
@@ -69,8 +73,8 @@ export function pdfToRm(
   y: number,
   page: PdfPageSize,
 ): [number, number] {
-  const rmX = (x - page.width / 2) / PT_PER_RM;
-  const rmY = (page.height - y) / PT_PER_RM;
+  const rmX = (x - (page.x0 ?? 0) - page.width / 2) / PT_PER_RM;
+  const rmY = ((page.y0 ?? 0) + page.height - y) / PT_PER_RM;
   return [rmX, rmY];
 }
 
@@ -125,11 +129,17 @@ function decodeLatin1(bytes: Uint8Array): string {
 }
 
 /**
- * Extract every `/MediaBox` entry from a PDF, in file order. PDFs that vary
- * page size store a MediaBox per page (usually in order); uniform PDFs yield a
- * single value reused for all pages. Falls back to US Letter.
+ * Visible size of every page, in document order. Walks the page tree (which
+ * handles compressed object streams and inherited boxes); if that fails, falls
+ * back to every plain-text `/MediaBox` in file order, then to US Letter.
  */
 export function readPdfPageSizes(bytes: Uint8Array): PdfPageSize[] {
+  try {
+    const boxes = readPdfPageBoxes(bytes);
+    if (boxes) return boxes;
+  } catch {
+    // malformed PDF: use the plain-text scan below
+  }
   const s = decodeLatin1(bytes);
   const re =
     /\/MediaBox\s*\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\]/g;
