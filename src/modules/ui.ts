@@ -64,7 +64,11 @@ function selectedRegularItems(win: Window): Zotero.Item[] {
   return items.filter((it) => it.isRegularItem());
 }
 
-export async function runSyncNow(): Promise<void> {
+/**
+ * Push PDFs + annotations, then pull. With `items`, only those papers' PDF
+ * attachments are synced; otherwise every tagged item is.
+ */
+export async function runSyncNow(items?: Zotero.Item[]): Promise<void> {
   if (!client.isConnected()) {
     new ztoolkit.ProgressWindow(config.addonName)
       .createLine({ text: getString("status-not-connected"), type: "fail" })
@@ -82,11 +86,13 @@ export async function runSyncNow(): Promise<void> {
   try {
     const report = (text: string, pct: number) =>
       pw.changeLine({ progress: pct, text });
+    const atts = items ? engine.pdfAttachmentsOf(items) : undefined;
+    const onlyKeys = atts ? new Set(atts.map((a) => a.key)) : undefined;
     const runOnce = async () => {
-      const push = await engine.pushAll(report);
-      const sent = await pushAnnotations(report);
+      const push = await engine.pushAll(report, { attachments: atts });
+      const sent = await pushAnnotations(report, { onlyKeys });
       log("runSyncNow: push done, starting pull");
-      const pull = await engine.pullAll(report);
+      const pull = await engine.pullAll(report, { onlyKeys });
       return { push, sent, pull };
     };
     let push, sent, pull;
@@ -711,6 +717,7 @@ function renderSection(
   const sync = doc.createElement("button");
   sync.style.marginInlineStart = "6px";
   sync.textContent = getString("sync-now");
-  sync.addEventListener("click", () => void runSyncNow());
+  sync.disabled = !synced;
+  sync.addEventListener("click", () => void runSyncNow([item]));
   body.appendChild(sync);
 }
