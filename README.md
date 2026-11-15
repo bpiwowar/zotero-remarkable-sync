@@ -1,7 +1,7 @@
 # Zotero reMarkable Sync
 
 > [!WARNING]
-> **This is an experimental add-on** (but I am using it frequently, so issues tend to be fixed quickly). 
+> **This is an experimental add-on** (but I am using it frequently, so issues tend to be fixed quickly).
 > It reads and writes the undocumented `.rm`
 > v6 format and mutates documents in your reMarkable cloud account. Bugs can
 > reorder, corrupt, or delete annotations and files. **Back up your reMarkable
