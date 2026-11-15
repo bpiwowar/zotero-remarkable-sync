@@ -15,7 +15,7 @@ import {
   allRecords,
   type SyncRecord,
 } from "./state";
-import { applyAnnotations } from "./annotations";
+import { applyAnnotations, existingSig } from "./annotations";
 
 const IO = globalThis as any;
 
@@ -140,6 +140,44 @@ export function displayNameFor(att: Zotero.Item): string {
 }
 
 /**
+ * Record for a freshly uploaded document. The new document starts with no
+ * annotations: annotations pulled from the previous copy become the user's own
+ * (so the annotation push writes them to the new copy) — except page-tag notes
+ * when their tags were carried over by the upload (`tagsCarried`): those stay
+ * tracked.
+ */
+function freshRecord(
+  att: Zotero.Item,
+  entry: { id: string; hash: string },
+  fileHash: string,
+  name: string,
+  prev: SyncRecord | undefined,
+  tagsCarried: boolean,
+): SyncRecord {
+  const notes = !tagsCarried
+    ? []
+    : (prev?.annotationKeys ?? []).filter((k) =>
+        prev?.annotationSigs?.[k]?.startsWith("note|"),
+      );
+  return {
+    docId: entry.id,
+    docHash: entry.hash,
+    fileHash,
+    visibleName: name,
+    libraryID: att.libraryID,
+    lastPushed: Date.now(),
+    annotationKeys: notes,
+    annotationSigs: Object.fromEntries(
+      notes.map((k) => [k, prev!.annotationSigs![k]]),
+    ),
+    pageTags: tagsCarried ? prev?.pageTags : undefined,
+    pushedKeys: [],
+    pushedItems: [],
+    deletedSigs: [],
+  };
+}
+
+/**
  * Push every tagged item's PDF attachment to the configured reMarkable folder.
  * Unchanged files (matching the recorded sha-256) are skipped.
  */
@@ -159,8 +197,9 @@ export async function pushAll(
   log("pushAll: start");
   // When given an explicit attachment list (per-item "Overwrite from Zotero"),
   // push exactly those; otherwise push every tagged item's PDF.
-  const attachments =
-    opts.attachments ?? pdfAttachmentsOf(await findSyncItems());
+  const attachments = (
+    opts.attachments ?? pdfAttachmentsOf(await findSyncItems())
+  ).filter((att) => !isInTrash(att));
   log(`pushAll: ${attachments.length} PDF attachment(s) tagged`);
   if (attachments.length === 0) {
     progress?.("Nothing tagged to sync", 100);
@@ -225,29 +264,42 @@ export async function pushAll(
         log(`pushAll: "${name}" missing on device — re-uploading (forced)`);
       }
 
+      // Replacing a document still on the device (PDF changed in Zotero, or a
+      // forced overwrite): first pull its tablet annotations, unless Zotero
+      // wins, so none is lost when the old copy goes to the device trash.
+      const replacing = !!existing && !missingOnDevice;
+      if (replacing && !opts.force) {
+        log(`pushAll: "${name}" changed in Zotero — pulling before replacing`);
+        const pull = await pullAll(progress, { onlyKeys: new Set([att.key]) });
+        if (pull.failed) {
+          throw new Error(
+            `pull before replacing failed, kept the old copy: ${pull.errors.join("; ")}`,
+          );
+        }
+      }
+      const prev = replacing ? await getRecord(att.key) : existing;
+
       log(`pushAll: uploading "${name}" (${bytes.length} bytes) …`);
       const pageCount = await pdfPageCount(att);
       const entry = await client.uploadPdf(api, name, bytes, folderId, {
         pageCount: pageCount ?? undefined,
+        pageTags: prev?.pageTags,
       });
-      // When re-uploading a fresh document, reset annotation tracking so every
-      // Zotero annotation gets re-pushed onto the fresh document.
-      const record: SyncRecord = {
-        docId: entry.id,
-        docHash: entry.hash,
-        fileHash,
-        visibleName: name,
-        libraryID: att.libraryID,
-        lastPushed: Date.now(),
-        lastPulledVersion: missingOnDevice
-          ? undefined
-          : existing?.lastPulledVersion,
-        annotationKeys: missingOnDevice ? [] : existing?.annotationKeys,
-        pushedKeys: missingOnDevice ? [] : existing?.pushedKeys,
-        pushedItems: missingOnDevice ? [] : existing?.pushedItems,
-      };
-      await setRecord(att.key, record);
+      await setRecord(
+        att.key,
+        freshRecord(att, entry, fileHash, name, prev, !!pageCount),
+      );
       log(`pushAll: uploaded "${name}" -> ${entry.id}`);
+
+      if (replacing && prev) {
+        try {
+          const old = await client.findById(api, prev.docId);
+          if (old) await client.trashDoc(api, old.hash);
+          log(`pushAll: moved the old copy of "${name}" to reMarkable trash`);
+        } catch (e) {
+          log(`pushAll: could not trash old copy of "${name}": ${errMsg(e)}`);
+        }
+      }
       summary.pushed++;
     } catch (e) {
       log(`pushAll: FAILED "${name}": ${errMsg(e)}`);
@@ -269,6 +321,36 @@ export interface PullSummary {
   removed: number;
   failed: number;
   errors: string[];
+}
+
+/**
+ * `rec.deletedSigs` plus the signatures of pulled annotations the user has
+ * deleted in Zotero since the last pull, so the pull does not re-create them.
+ * Page-tag notes are excluded: deleting one removes the tags on the device.
+ */
+function withZoteroDeletions(rec: SyncRecord, libraryID: number): string[] {
+  const out = new Set(rec.deletedSigs ?? []);
+  for (const key of rec.annotationKeys ?? []) {
+    const sig = rec.annotationSigs?.[key];
+    if (!sig || sig.startsWith("note|")) continue;
+    const item = Zotero.Items.getByLibraryAndKey(libraryID, key);
+    if (!item || (item as Zotero.Item).deleted) {
+      log(`pullAll: annotation ${key} deleted in Zotero, won't re-pull it`);
+      out.add(sig);
+    }
+  }
+  return [...out];
+}
+
+/** Content signatures of the given annotations, by key. */
+function sigsOf(keys: string[], libraryID: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    const item = Zotero.Items.getByLibraryAndKey(libraryID, key);
+    const sig = item && existingSig(item as Zotero.Item);
+    if (sig) out[key] = sig;
+  }
+  return out;
 }
 
 /**
@@ -309,7 +391,7 @@ export async function pullAll(
     try {
       const libraryID = rec.libraryID ?? Zotero.Libraries.userLibraryID;
       const att = Zotero.Items.getByLibraryAndKey(libraryID, attKey);
-      if (!att) {
+      if (!att || isInTrash(att as Zotero.Item)) {
         done++;
         continue;
       }
@@ -340,12 +422,13 @@ export async function pullAll(
         : new Uint8Array();
       const sizes = readPdfPageSizes(bytes);
 
+      const deletedSigs = withZoteroDeletions(rec, libraryID);
       const result = await applyAnnotations(
         att as Zotero.Item,
         pages,
         sizes,
         rec.annotationKeys ?? [],
-        rec.deletedSigs ?? [],
+        deletedSigs,
         pageTags,
       );
 
@@ -353,6 +436,8 @@ export async function pullAll(
         ...rec,
         lastPulledVersion: entry.hash,
         annotationKeys: result.keys,
+        annotationSigs: sigsOf(result.keys, libraryID),
+        deletedSigs,
         pageTags: Object.fromEntries(
           pageTags.map((t) => [String(t.pdfPageIndex), t.names]),
         ),
@@ -428,8 +513,11 @@ export async function resetPullState(attKeys: string[]): Promise<void> {
 }
 
 /**
- * Remove the reMarkable documents for the given attachment keys and forget them.
- * Used when items are deleted/trashed in Zotero.
+ * Forget the given attachments after they were permanently deleted in Zotero
+ * (emptied from the trash). If `deleteOnUnsync` is on, their reMarkable
+ * documents go to the device trash (recoverable there); otherwise they are
+ * left on the device. Items merely moved to the Zotero trash are not handled
+ * here: sync skips them until they are restored ({@link isInTrash}).
  */
 export async function unsyncByKeys(attKeys: string[]): Promise<void> {
   const want = new Set(attKeys);
@@ -438,7 +526,7 @@ export async function unsyncByKeys(attKeys: string[]): Promise<void> {
   if (hits.length === 0) return;
 
   let api: Awaited<ReturnType<typeof client.getApi>> | null = null;
-  if (client.isConnected()) {
+  if (getPref("deleteOnUnsync") && client.isConnected()) {
     try {
       ensureNetworkGlobals();
       api = await client.getApi();
@@ -451,14 +539,21 @@ export async function unsyncByKeys(attKeys: string[]): Promise<void> {
     if (api) {
       try {
         const entry = await client.findById(api, rec.docId);
-        if (entry) await client.deleteDoc(api, entry.hash);
-        log(`unsync: deleted "${rec.visibleName}" from device`);
+        if (entry) await client.trashDoc(api, entry.hash);
+        log(`unsync: moved "${rec.visibleName}" to reMarkable trash`);
       } catch (e) {
-        log(`unsync: delete failed for "${rec.visibleName}": ${errMsg(e)}`);
+        log(`unsync: trash failed for "${rec.visibleName}": ${errMsg(e)}`);
       }
+    } else {
+      log(`unsync: forgot "${rec.visibleName}" (kept on the device)`);
     }
     await removeRecord(attKey);
   }
+}
+
+/** True if the attachment or its parent item is in the Zotero trash. */
+export function isInTrash(att: Zotero.Item): boolean {
+  return !!att.deleted || !!att.parentItem?.deleted;
 }
 
 /** Tag the given regular items so they are included in sync. */

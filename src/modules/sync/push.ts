@@ -39,9 +39,10 @@ import {
   type PushedItem,
   type SyncRecord,
 } from "./state";
-import { existingSig } from "./annotations";
+import { existingSig, pushFingerprint } from "./annotations";
 import {
   isSafeMode as engineIsSafeMode,
+  isInTrash,
   pdfPageCount,
   type ProgressFn,
 } from "./engine";
@@ -246,6 +247,10 @@ export async function pushAnnotations(
       if (!listed && entry) {
         log(`push: "${rec.visibleName}" not listed yet, using upload hash`);
       }
+      if (att && isInTrash(att as Zotero.Item)) {
+        done++;
+        continue;
+      }
       if (!att || !entry) {
         log(
           `push: skip "${rec.visibleName}" (${!att ? "no attachment" : "not on cloud"})`,
@@ -317,14 +322,17 @@ export async function pushAnnotations(
       // Group previously-written items by page (ids to remove, keys present).
       const trackedByPage = new Map<
         string,
-        { ids: CrdtId[]; keys: Set<string> }
+        { ids: CrdtId[]; keys: Set<string>; revs: Map<string, string> }
       >();
       for (const t of tracked) {
         const e =
           trackedByPage.get(t.page) ??
-          trackedByPage.set(t.page, { ids: [], keys: new Set() }).get(t.page)!;
+          trackedByPage
+            .set(t.page, { ids: [], keys: new Set(), revs: new Map() })
+            .get(t.page)!;
         for (const [p1, p2] of t.ids) e.ids.push({ part1: p1, part2: p2 });
         e.keys.add(t.key);
+        if (t.rev) e.revs.set(t.key, t.rev);
       }
 
       const pageUuids = new Set<string>([
@@ -343,12 +351,18 @@ export async function pushAnnotations(
         const here = trackedByPage.get(pageUuid) ?? {
           ids: [],
           keys: new Set<string>(),
+          revs: new Map<string, string>(),
         };
         const managedKeys = new Set(managedItems.map((a) => a.key));
-        // Skip pages whose managed set is unchanged (avoids re-uploads/churn).
+        // Skip pages whose managed set is unchanged — same annotations, none
+        // edited since pushed (avoids re-uploads/churn).
         const sameSet =
           managedKeys.size === here.keys.size &&
-          [...managedKeys].every((k) => here.keys.has(k));
+          managedItems.every((a) => {
+            if (!here.keys.has(a.key)) return false;
+            const was = here.revs.get(a.key);
+            return !was || pushFingerprint(a) === was;
+          });
         if (sameSet) continue;
 
         const found = findRef(pageUuid);
@@ -433,6 +447,7 @@ export async function pushAnnotations(
             page: pageUuid,
             ids: kids,
             sig: (item && existingSig(item)) || undefined,
+            rev: item ? pushFingerprint(item) : undefined,
           });
           writtenItems++;
         }

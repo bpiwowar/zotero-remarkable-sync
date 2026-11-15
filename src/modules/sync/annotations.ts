@@ -126,6 +126,19 @@ export function existingSig(item: Zotero.Item): string | null {
   return null;
 }
 
+/**
+ * Fingerprint of everything that is pushed to the device for a Zotero
+ * annotation (type, colour, text, exact position), to detect edits since push.
+ */
+export function pushFingerprint(item: Zotero.Item): string {
+  return [
+    item.annotationType,
+    item.annotationColor ?? "",
+    item.annotationText ?? "",
+    item.annotationPosition ?? "",
+  ].join("\u0000");
+}
+
 async function save(
   attachment: Zotero.Item,
   json: Record<string, unknown>,

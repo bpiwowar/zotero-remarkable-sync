@@ -128,7 +128,9 @@ async function onNotify(
     column.refresh();
   }
 
-  if (event !== "trash" && event !== "delete") return;
+  // Only a permanent deletion unsyncs: an item in the trash can be restored,
+  // and sync skips it meanwhile.
+  if (event !== "delete") return;
 
   // Collect the keys of affected attachments (records are keyed by attachment).
   const keys = new Set<string>();

@@ -137,9 +137,14 @@ export async function uploadPdf(
   visibleName: string,
   bytes: Uint8Array,
   folderId: string,
-  opts: { tags?: string[]; pageCount?: number } = {},
+  opts: {
+    tags?: string[];
+    pageCount?: number;
+    /** page tags to set, by 0-based PDF page index (needs pageCount) */
+    pageTags?: Record<string, string[]>;
+  } = {},
 ): Promise<SimpleEntry> {
-  const { tags = [], pageCount } = opts;
+  const { tags = [], pageCount, pageTags = {} } = opts;
   if (!pageCount || pageCount < 1) {
     log(`uploadPdf: page count unknown for "${visibleName}", using putPdf`);
     return withGenerationRetry(() =>
@@ -149,7 +154,16 @@ export async function uploadPdf(
   const id = uuid4();
   const pages = Array.from({ length: pageCount }, () => uuid4());
   return withGenerationRetry(() =>
-    putPdfWithPages(api, id, visibleName, bytes, folderId, tags, pages),
+    putPdfWithPages(
+      api,
+      id,
+      visibleName,
+      bytes,
+      folderId,
+      tags,
+      pages,
+      pageTags,
+    ),
   );
 }
 
@@ -161,6 +175,7 @@ async function putPdfWithPages(
   parent: string,
   tags: string[],
   pages: string[],
+  pageTags: Record<string, string[]>,
 ): Promise<SimpleEntry> {
   const raw = api.raw;
   const now = Date.now();
@@ -191,7 +206,12 @@ async function putPdfWithPages(
     zoomMode: "bestFit",
     originalPageCount: pages.length,
     pageCount: pages.length,
-    pageTags: [],
+    pageTags: Object.entries(pageTags).flatMap(([idx, names]) => {
+      const pageId = pages[Number(idx)];
+      return pageId
+        ? names.map((name) => ({ name, pageId, timestamp: now }))
+        : [];
+    }),
     pages,
     redirectionPageMap: pages.map((_, i) => i),
     sizeInBytes: String(bytes.length),

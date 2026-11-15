@@ -7,7 +7,7 @@
 
 import { getRecordCached } from "./sync/state";
 import { getSyncTag } from "./sync/engine";
-import { existingSig } from "./sync/annotations";
+import { pushFingerprint } from "./sync/annotations";
 import { log } from "../utils/log";
 
 const FRESH_MS = 24 * 60 * 60 * 1000; // "synced recently" window
@@ -33,10 +33,10 @@ function stateOf(item: Zotero.Item): SyncState {
     if (!rec) continue;
     hasRecord = true;
     lastPushed = Math.max(lastPushed, rec.lastPushed || 0);
-    // Map of already-pushed annotation key -> the signature we pushed, so we can
-    // tell a brand-new annotation from a modified one (same key, moved/retyped).
+    // Map of already-pushed annotation key -> its fingerprint when pushed, so we
+    // can tell a brand-new annotation from an edited one (same key).
     const pushedSig = new Map<string, string | undefined>();
-    for (const p of rec.pushedItems ?? []) pushedSig.set(p.key, p.sig);
+    for (const p of rec.pushedItems ?? []) pushedSig.set(p.key, p.rev);
     const pulled = new Set(rec.annotationKeys ?? []);
     const present = new Set<string>();
     for (const a of att.getAnnotations()) {
@@ -47,7 +47,7 @@ function stateOf(item: Zotero.Item): SyncState {
         break;
       }
       const was = pushedSig.get(a.key);
-      if (was && existingSig(a) !== was) {
+      if (was && pushFingerprint(a) !== was) {
         dirty = true; // pushed before, but edited since
         break;
       }

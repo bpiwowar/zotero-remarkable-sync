@@ -15,12 +15,12 @@ Zotero  ── tagged PDFs ──▶  ── Zotero annotations ──▶  ◀�
                                 (skipped in safe mode)
 ```
 
-1. **PDF push** ([`pushAll`](../src/modules/sync/engine.ts#L146)) uploads the
+1. **PDF push** ([`pushAll`](../src/modules/sync/engine.ts#L184)) uploads the
    PDF of every item tagged for sync that is new or whose file changed.
-2. **Annotation push** ([`pushAnnotations`](../src/modules/sync/push.ts#L211))
+2. **Annotation push** ([`pushAnnotations`](../src/modules/sync/push.ts#L212))
    writes annotations made in Zotero onto the reMarkable pages, and removes page
    tags that were removed in Zotero.
-3. **Pull** ([`pullAll`](../src/modules/sync/engine.ts#L278)) reads the
+3. **Pull** ([`pullAll`](../src/modules/sync/engine.ts#L360)) reads the
    tablet's annotations and page tags and mirrors them as native Zotero
    annotations.
 
@@ -49,7 +49,7 @@ reopened on it.
 | ---------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `syncMode`       | `manual` (default), `interval` | `manual` syncs only on request. `interval` also runs a full sync every `syncInterval` minutes ([`scheduler.ts`](../src/modules/scheduler.ts#L17)).                                                                                              |
 | `syncInterval`   | minutes, default 30            | Period of the timer in `interval` mode.                                                                                                                                                                                                         |
-| `safeMode`       | `true` (default), `false`      | When on, nothing on the tablet is modified except uploading PDFs. This skips the whole annotation push, including page-tag removals ([`pushAnnotations`](../src/modules/sync/push.ts#L221), [`isSafeMode`](../src/modules/sync/engine.ts#L68)). |
+| `safeMode`       | `true` (default), `false`      | When on, nothing on the tablet is modified except uploading PDFs. This skips the whole annotation push, including page-tag removals ([`pushAnnotations`](../src/modules/sync/push.ts#L212), [`isSafeMode`](../src/modules/sync/engine.ts#L68)). |
 | `deleteOnUnsync` | `true` (default), `false`      | The default button of the "Remove from sync" dialog: delete the document on the reMarkable, or keep it.                                                                                                                                         |
 | `syncTag`        | default `@remarkable`          | The tag that marks items for sync.                                                                                                                                                                                                              |
 | `folder`         | default `Zotero`               | Destination folder on the reMarkable, created if missing ([`ensureFolder`](../src/modules/remarkable/client.ts#L88)).                                                                                                                           |
@@ -69,7 +69,7 @@ re-authenticates and retries once.
 
 ## Phase 1: PDF push
 
-[`pushAll`](../src/modules/sync/engine.ts#L146) handles each attachment as
+[`pushAll`](../src/modules/sync/engine.ts#L184) handles each attachment as
 follows:
 
 - **No record:** the PDF is uploaded and a record is created.
@@ -79,9 +79,19 @@ follows:
   [`stopSync`](../src/modules/sync/engine.ts#L77)s the attachment: the record is
   dropped and the sync tag is removed from the item, unless another of its PDFs
   is still synced. Nothing is uploaded again.
-- **File changed in Zotero:** the PDF is uploaded as a **new** document and the
-  record points to it. The old document stays on the tablet (see
-  [Limits](#known-limits)).
+- **In the Zotero trash:** skipped (in every phase) until restored.
+- **File changed in Zotero, or a forced overwrite:** the document is replaced.
+  1. For a changed file, the old document is pulled first, so annotations made
+     on the tablet reach Zotero. If that pull fails, the old copy is kept and
+     nothing is uploaded. A forced overwrite ("Zotero wins") skips the pull.
+  2. The PDF is uploaded as a new document, carrying over the page tags.
+  3. The record is reset by
+     [`freshRecord`](../src/modules/sync/engine.ts#L149). Annotations pulled
+     from the old copy become the user's own, so the annotation push writes
+     them to the new copy (unless safe mode is on). Page-tag notes stay
+     tracked.
+  4. The old document is moved to the reMarkable trash, where it can be
+     recovered.
 
 ### Uploading with the real page list
 
@@ -96,19 +106,19 @@ be pushed until then. If the page count is unknown, the plugin falls back to
 
 ## Phase 2: annotation push (Zotero → reMarkable)
 
-[`pushAnnotations`](../src/modules/sync/push.ts#L211) does nothing in safe mode.
+[`pushAnnotations`](../src/modules/sync/push.ts#L212) does nothing in safe mode.
 Otherwise it processes each synced document in two steps.
 
 ### Step 1: page-tag removals
 
-[`pushPageTagRemovals`](../src/modules/sync/push.ts#L140) compares two things:
+[`pushPageTagRemovals`](../src/modules/sync/push.ts#L141) compares two things:
 
 - **The baseline:** `rec.pageTags`, the tablet's tags on each page as of the
   last pull.
 - **What's in Zotero:** the tags still present on that page's tag note.
 
 A baseline tag missing from the note is one the user removed in Zotero
-([`removedPageTags`](../src/modules/sync/push.ts#L110)). Deleting the note
+([`removedPageTags`](../src/modules/sync/push.ts#L111)). Deleting the note
 removes all of that page's tags. Those tags are filtered out of the document's
 `.content` `pageTags` and committed. The baseline is then updated so the removal
 isn't applied twice.
@@ -123,18 +133,20 @@ in Zotero are pushed: anything listed in `rec.annotationKeys` came from the
 tablet and is skipped.
 
 - **Converting:** each annotation is turned into reMarkable items
-  ([`annotationToRm`](../src/modules/sync/push.ts#L60)).
+  ([`annotationToRm`](../src/modules/sync/push.ts#L61)).
   - **Highlights and underlines:** one glyph range per line.
   - **Ink:** fineliner strokes.
   - **Colours:** mapped to the device palette.
 - **Grouping:** annotations are grouped by reMarkable page. A page is rewritten
-  only when its set of pushed annotation keys changed (an annotation was added
-  or deleted).
+  only when an annotation on it was added, deleted or edited since the last
+  push. Edits are detected with
+  [`pushFingerprint`](../src/modules/sync/annotations.ts#L133) (type, colour,
+  text and exact position), stored as `rev` in `rec.pushedItems`.
 - **Rewriting a page:**
   - **The page already has a `.rm` file:** new items are appended to its layer,
     and items previously pushed for deleted annotations are removed.
   - **The page has none:** a `.rm` is cloned from another page's structure
-    ([`loadTemplate`](../src/modules/sync/push.ts#L186)), or a blank one is
+    ([`loadTemplate`](../src/modules/sync/push.ts#L187)), or a blank one is
     built.
 - **Tracking:** `rec.pushedItems` records which reMarkable item ids each Zotero
   annotation became, so that deleting the annotation in Zotero deletes them on
@@ -142,7 +154,7 @@ tablet and is skipped.
 - **Placeholder guard:** if the device lists fewer pages than the PDF has, it
   still holds the placeholder page list. The document is skipped with the log
   line "open it once on the reMarkable"
-  ([push.ts](../src/modules/sync/push.ts#L282)).
+  ([push.ts](../src/modules/sync/push.ts#L287)).
 
 ### Committing changes
 
@@ -161,7 +173,7 @@ uploaded).
 
 ## Phase 3: pull (reMarkable → Zotero)
 
-[`pullAll`](../src/modules/sync/engine.ts#L278) skips a document whose hash
+[`pullAll`](../src/modules/sync/engine.ts#L360) skips a document whose hash
 equals `rec.lastPulledVersion`, unless forced. Otherwise
 [`fetchAnnotations`](../src/modules/remarkable/rmdoc.ts#L95) does the following:
 
@@ -172,7 +184,7 @@ equals `rec.lastPulledVersion`, unless forced. Otherwise
 - groups the page tags by PDF page
   ([`pageTagsOf`](../src/modules/remarkable/rmdoc.ts#L37)).
 
-[`applyAnnotations`](../src/modules/sync/annotations.ts#L443) then mirrors the
+[`applyAnnotations`](../src/modules/sync/annotations.ts#L456) then mirrors the
 device onto the attachment.
 
 ### What gets created
@@ -182,7 +194,7 @@ device onto the attachment.
 | text highlight     | highlight (adjacent same-colour lines merged)                                                                                                                             |
 | highlighter stroke | translucent highlight                                                                                                                                                     |
 | pen stroke         | ink                                                                                                                                                                       |
-| page tags          | one yellow note in the page's top-left corner, comment `reMarkable page tags: a, b`, Zotero tags `a`, `b` ([`buildPageTagNote`](../src/modules/sync/annotations.ts#L379)) |
+| page tags          | one yellow note in the page's top-left corner, comment `reMarkable page tags: a, b`, Zotero tags `a`, `b` ([`buildPageTagNote`](../src/modules/sync/annotations.ts#L392)) |
 
 ### Matching
 
@@ -198,12 +210,20 @@ text, or a note's tag list ([`sig`](../src/modules/sync/annotations.ts#L82),
   `rec.annotationKeys`.
 - **An annotation in `rec.annotationKeys` that is gone from the device** is
   deleted in Zotero, unless the user edited it (next section).
+- **A pulled annotation the user deleted in Zotero** is not created again
+  ([`withZoteroDeletions`](../src/modules/sync/engine.ts#L331)). Each pull
+  stores the signature of every tracked annotation (`rec.annotationSigs`). At
+  the next pull, the signatures of tracked annotations missing from Zotero go
+  to `rec.deletedSigs`, which suppresses them. This stays Zotero-side: the
+  annotation remains on the tablet. _Overwrite Zotero from reMarkable_ clears
+  the suppressions. Page-tag notes are excluded, since deleting one removes the
+  tags on the tablet instead.
 - **The user's own annotations** (not in `annotationKeys`) are never modified
   or deleted.
 
 ### User edits on pulled annotations
 
-[`isUserEdited`](../src/modules/sync/annotations.ts#L150) decides whether the
+[`isUserEdited`](../src/modules/sync/annotations.ts#L163) decides whether the
 user edited a pulled annotation:
 
 - **Any annotation:** it has a comment or tags.
@@ -214,33 +234,35 @@ When an edited annotation disappears from the device:
 
 - **The device annotation was only modified** (extended or redrawn): the
   matching replacement is the same type on the same page with the largest
-  overlap ([`findReplacement`](../src/modules/sync/annotations.ts#L229)). The
+  overlap ([`findReplacement`](../src/modules/sync/annotations.ts#L242)). The
   Zotero annotation is updated **in place**, with the same key, so links from
   notes keep working.
   - **Comment:** the user's comment is kept
-    ([`mergedEdits`](../src/modules/sync/annotations.ts#L169)). For a page-tag
+    ([`mergedEdits`](../src/modules/sync/annotations.ts#L182)). For a page-tag
     note whose comment is still the generated one, the new generated comment is
     used instead.
   - **Tags:** the user's tags are kept and the device's current tags are added.
 - **The device annotation was deleted:** the Zotero annotation is kept and
   becomes the user's own, no longer tracked.
 
-After applying, the record stores the new `annotationKeys`, the document hash
-as `lastPulledVersion`, and the page-tag baseline `pageTags` used by phase 2.
+After applying, the record stores the new `annotationKeys` and their
+signatures, the document hash as `lastPulledVersion`, the updated
+`deletedSigs`, and the page-tag baseline `pageTags` used by phase 2.
 
 ## Other actions
 
-| Action                            | Where                   | What it does                                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add to sync                       | context menu, item pane | Adds the sync tag ([`addToSync`](../src/modules/sync/engine.ts#L465)). Nothing is uploaded until the next sync.                                                                                                                                                                                                                                                                                     |
-| Remove from sync                  | context menu, item pane | Dialog ([`askUnsync`](../src/modules/ui.ts#L330)): **Delete** or **Keep** the reMarkable copy, plus "pull first" (default on). [`removeFromSync`](../src/modules/sync/engine.ts#L480) does a final pull if asked; if that pull fails, the documents are kept on the device. It then removes the tag and record, and deletes the document if chosen. Not connected: only the Zotero side is changed. |
-| Overwrite device from Zotero      | context menu            | Forced PDF re-upload plus annotation push for the selection ([`runOverwriteFromZotero`](../src/modules/ui.ts#L255)). Blocked in safe mode.                                                                                                                                                                                                                                                          |
-| Overwrite Zotero from reMarkable  | context menu            | Resets the pull state ([`resetPullState`](../src/modules/sync/engine.ts#L418)), then a forced pull for the selection ([`runOverwriteFromRemarkable`](../src/modules/ui.ts#L290)).                                                                                                                                                                                                                   |
-| Push annotations                  | Tools                   | Phase 2 only, for every item ([`runPush`](../src/modules/ui.ts#L172)). Blocked in safe mode.                                                                                                                                                                                                                                                                                                        |
-| Force re-pull annotations         | Tools                   | Phase 3 for every item, ignoring `lastPulledVersion` ([`runForcePull`](../src/modules/ui.ts#L135)). Safe: matching prevents duplicates.                                                                                                                                                                                                                                                             |
-| Remove pulled annotations         | Tools                   | Deletes every annotation the plugin created and resets pull tracking ([`clearPulledAnnotations`](../src/modules/sync/engine.ts#L384)). The next pull recreates them.                                                                                                                                                                                                                                |
-| Clean up device folder            | Tools                   | Lists documents directly in the sync folder that no synced item owns ([`findOrphans`](../src/modules/sync/cleanup.ts#L82)), and offers **Ignore**, **Relink** (tag the matching item and record the link without re-uploading) or **Move to trash** for each ([`applyDecisions`](../src/modules/sync/cleanup.ts#L175)).                                                                             |
-| Item trashed or deleted in Zotero | automatic               | The notifier ([`onNotify`](../src/hooks.ts#L110)) calls [`unsyncByKeys`](../src/modules/sync/engine.ts#L434), which deletes the document on the reMarkable and drops the record.                                                                                                                                                                                                                    |
+| Action                                             | Where                   | What it does                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add to sync                                        | context menu, item pane | Adds the sync tag ([`addToSync`](../src/modules/sync/engine.ts#L560)). Nothing is uploaded until the next sync.                                                                                                                                                                                                                                                                                     |
+| Remove from sync                                   | context menu, item pane | Dialog ([`askUnsync`](../src/modules/ui.ts#L330)): **Delete** or **Keep** the reMarkable copy, plus "pull first" (default on). [`removeFromSync`](../src/modules/sync/engine.ts#L575) does a final pull if asked; if that pull fails, the documents are kept on the device. It then removes the tag and record, and deletes the document if chosen. Not connected: only the Zotero side is changed. |
+| Overwrite device from Zotero                       | context menu            | Forced replacement of the selection's documents, without a final pull ("Zotero wins"), plus annotation push ([`runOverwriteFromZotero`](../src/modules/ui.ts#L255)). The old copies go to the reMarkable trash. Blocked in safe mode.                                                                                                                                                               |
+| Overwrite Zotero from reMarkable                   | context menu            | Resets the pull state ([`resetPullState`](../src/modules/sync/engine.ts#L503)), then a forced pull for the selection ([`runOverwriteFromRemarkable`](../src/modules/ui.ts#L290)).                                                                                                                                                                                                                   |
+| Push annotations                                   | Tools                   | Phase 2 only, for every item ([`runPush`](../src/modules/ui.ts#L172)). Blocked in safe mode.                                                                                                                                                                                                                                                                                                        |
+| Force re-pull annotations                          | Tools                   | Phase 3 for every item, ignoring `lastPulledVersion` ([`runForcePull`](../src/modules/ui.ts#L135)). Safe: matching prevents duplicates.                                                                                                                                                                                                                                                             |
+| Remove pulled annotations                          | Tools                   | Deletes every annotation the plugin created and resets pull tracking ([`clearPulledAnnotations`](../src/modules/sync/engine.ts#L469)). The next pull recreates them.                                                                                                                                                                                                                                |
+| Clean up device folder                             | Tools                   | Lists documents directly in the sync folder that no synced item owns ([`findOrphans`](../src/modules/sync/cleanup.ts#L82)), and offers **Ignore**, **Relink** (tag the matching item and record the link without re-uploading) or **Move to trash** for each ([`applyDecisions`](../src/modules/sync/cleanup.ts#L175)).                                                                             |
+| Item moved to the Zotero trash                     | automatic               | Nothing on the device; sync skips the item until it is restored ([`isInTrash`](../src/modules/sync/engine.ts#L555)).                                                                                                                                                                                                                                                                                |
+| Item deleted permanently in Zotero (trash emptied) | automatic               | The notifier ([`onNotify`](../src/hooks.ts#L110)) calls [`unsyncByKeys`](../src/modules/sync/engine.ts#L522): the record is dropped and, if `deleteOnUnsync` is on, the document is moved to the reMarkable trash.                                                                                                                                                                                  |
 
 ## Status dot
 
@@ -254,20 +276,11 @@ state of each synced item:
 
 ## Known limits
 
-- **Deleting a tablet annotation in Zotero isn't permanent.** A highlight or
-  ink stroke that came from the tablet comes back at the next pull that fetches
-  the document (any change on the tablet), or at any forced pull.
-  `rec.deletedSigs` is meant to suppress this but nothing fills it in yet.
-  Page-tag notes are the exception: deleting one removes the tags on the
-  tablet.
-- **Edits to an already-pushed annotation are not pushed.** Moving one, or
-  changing its colour, leaves its page's set of keys unchanged, so the page
-  isn't rewritten. The status dot does show ◆.
-- **A changed PDF leaves the old document on the tablet.** The new file is
-  uploaded as a new document; the old one has to be removed with _Clean up
-  device folder_.
-- **Trashing an item in Zotero deletes its reMarkable document straight
-  away,** without the confirmation dialog and regardless of `deleteOnUnsync`.
+- **Deleting a tablet annotation in Zotero doesn't delete it on the tablet.**
+  It is only kept from coming back into Zotero.
+- **Records are per computer.** The sync state lives in the local Zotero data
+  directory and is not shared through Zotero sync, so using the plugin on
+  several computers with the same reMarkable account is not supported yet.
 - **Page tags go to Zotero only, except removals.** Tags added in Zotero are
   not sent to the tablet, and document-level tags are not synced.
 - **Commas in tag names aren't supported.** The note's comment is

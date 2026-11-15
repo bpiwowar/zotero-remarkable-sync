@@ -19,6 +19,9 @@ export interface SyncRecord {
   lastPulledVersion?: string;
   /** keys of annotations created on the last pull (for idempotent re-pull) */
   annotationKeys?: string[];
+  /** content signature of each annotationKeys entry, so a pulled annotation
+   *  later deleted in Zotero can be added to deletedSigs */
+  annotationSigs?: Record<string, string>;
   /** keys of Zotero annotations already pushed to the device (avoid re-push) */
   pushedKeys?: string[];
   /** Zotero annotations pushed to the device + the reMarkable item ids assigned,
@@ -40,6 +43,8 @@ export interface PushedItem {
   ids: [number, number][];
   /** content signature, to suppress re-pull if deleted */
   sig?: string;
+  /** pushFingerprint() when pushed — a change means the annotation was edited */
+  rev?: string;
 }
 
 type StateMap = Record<string, SyncRecord>;
