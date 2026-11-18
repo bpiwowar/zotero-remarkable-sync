@@ -13,4 +13,5 @@ export * from "./rmdoc";
 export * from "./document";
 export * from "./geometry";
 export * from "./pdfpages";
+export * from "./shapes";
 export { parseRmScene, serializeRmScene, RmScene } from "./rmscene";

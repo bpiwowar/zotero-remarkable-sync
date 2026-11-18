@@ -80,9 +80,10 @@ device token is stored in Zotero preferences.
   alone.
 
 Text highlights become Zotero highlights, freehand highlighter becomes
-translucent highlights, pen strokes become ink, and page tags become a tagged
-note on the page. With safe mode off, highlights and ink made in Zotero are
-pushed to the device, and page tags removed in Zotero are removed there. Your
+translucent highlights, pen strokes become ink, rectangles drawn with the
+device's shape tool become Zotero area (image) annotations, and page tags become
+a tagged note on the page. With safe mode off, highlights and ink made in Zotero
+are pushed to the device, and page tags removed in Zotero are removed there. Your
 own Zotero annotations, comments and tags are never overwritten by a pull.
 
 See [How sync works](#how-sync-works) for the details: phases, modes, conflict

@@ -10,7 +10,7 @@
   },
   "scripts": {
     "bundle": "esbuild src/index.ts --bundle --format=esm --outfile=.scaffold/index.mjs --log-level=error",
-    "test": "npm run bundle && node test/rmlines.verify.mjs && node test/rmwrite.verify.mjs && node test/rmscene.verify.mjs && node test/pdfpages.verify.mjs",
+    "test": "npm run bundle && node test/rmlines.verify.mjs && node test/rmwrite.verify.mjs && node test/rmscene.verify.mjs && node test/pdfpages.verify.mjs && node test/shapes.verify.mjs",
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {

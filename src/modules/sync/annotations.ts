@@ -1,5 +1,5 @@
-// Create native Zotero annotations (highlights + ink) on a PDF attachment from
-// parsed reMarkable pages.
+// Create native Zotero annotations (highlights, ink, image areas) on a PDF
+// attachment from parsed reMarkable pages.
 //
 // Pull mirrors the device for annotations *we* created: device annotations are
 // deduped by a content signature against what is on the attachment, missing
@@ -8,6 +8,7 @@
 // the user added to a pulled annotation (see applyAnnotations).
 
 import {
+  detectShape,
   rmRectToPdf,
   strokeToPath,
   inkWidth,
@@ -100,6 +101,11 @@ export function existingSig(item: Zotero.Item): string | null {
       rects?: number[][];
       paths?: number[][];
     };
+    if (type === "image") {
+      const r = pos.rects?.[0];
+      if (!r) return null;
+      return sig("image", pos.pageIndex, r[0], r[1]);
+    }
     if (type === "highlight" || type === "underline") {
       const r = pos.rects?.[0];
       if (!r) return null;
@@ -424,6 +430,35 @@ function buildPageTagNote(
   };
 }
 
+/**
+ * A rectangle drawn with the device's shape tool, as a Zotero image (area)
+ * annotation: Zotero's own rectangle, with a snapshot of the enclosed region in
+ * the sidebar and in notes. Ovals have no Zotero counterpart and stay ink.
+ */
+function buildShape(
+  pageIndex: number,
+  stroke: RmStroke,
+  size: PdfPageSize,
+): Pending | null {
+  if (stroke.isHighlighter) return null;
+  const shape = detectShape(stroke.points);
+  if (shape?.kind !== "rectangle") return null;
+  const rect = rmRectToPdf(shape.bbox, size).map(
+    (v) => Math.round(v * 1000) / 1000,
+  );
+  return {
+    signature: sig("image", pageIndex, rect[0], rect[1]),
+    json: {
+      type: "image",
+      color: colorToHex(stroke.colorIndex, stroke.rgba),
+      pageLabel: String(pageIndex + 1),
+      sortIndex: sortIndex(pageIndex, (size.y0 ?? 0) + size.height - rect[3]),
+      position: { pageIndex, rects: [rect] },
+      comment: "",
+    },
+  };
+}
+
 function buildInk(
   pageIndex: number,
   stroke: RmStroke,
@@ -448,6 +483,20 @@ function buildInk(
       comment: "",
     },
   };
+}
+
+/**
+ * Render the snapshots of new image (area) annotations, so they show in the
+ * sidebar and in notes without first opening the PDF. Best effort.
+ */
+async function renderImages(attachment: Zotero.Item): Promise<void> {
+  try {
+    await (Zotero as any).PDFWorker?.renderAttachmentAnnotations?.(
+      attachment.id,
+    );
+  } catch (e) {
+    log("renderAttachmentAnnotations failed:", errMsg(e));
+  }
 }
 
 export interface ApplyResult {
@@ -503,7 +552,8 @@ export async function applyAnnotations(
         withSource(
           st.isHighlighter
             ? buildHighlighterStroke(pdfPageIndex, st, size)
-            : buildInk(pdfPageIndex, st, size),
+            : (buildShape(pdfPageIndex, st, size) ??
+                buildInk(pdfPageIndex, st, size)),
           st.ids,
         ),
       ),
@@ -561,6 +611,7 @@ export async function applyAnnotations(
       consumed.add(p);
   }
   let updated = 0;
+  let newImages = false;
   for (const a of edited) {
     const p = findReplacement(a, pendings, consumed);
     if (p) {
@@ -571,6 +622,7 @@ export async function applyAnnotations(
         keptKeys.push(a.key);
         track(a.key, p);
         updated++;
+        newImages ||= p.json.type === "image";
         continue;
       }
     }
@@ -587,9 +639,12 @@ export async function applyAnnotations(
     if (key) {
       present.add(p.signature);
       newKeys.push(key);
+      newImages ||= p.json.type === "image";
       track(key, p);
     }
   }
+
+  if (newImages) await renderImages(attachment);
 
   return {
     keys: [...keptKeys, ...newKeys],
