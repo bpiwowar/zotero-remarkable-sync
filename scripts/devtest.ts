@@ -1,5 +1,7 @@
 // Live round-trip test of the plugin's reMarkable layer against the cloud,
-// using rmapi-js v14. Reads one real document (read-only), and does every write
+// through remarkable-annotations' cloud client (rmapi-js only copies the source
+// document and downloads its PDF). Reads one real document (read-only), and
+// does every write
 // on documents it creates in the "zotrem-dev" folder.
 //
 // Usage: RM_DEVICE_TOKEN=... RM_SOURCE="<title prefix>" npm run devtest
@@ -15,12 +17,17 @@ import "../src/utils/polyfills";
   },
   Promise: { delay: (ms: number) => new Promise((r) => setTimeout(r, ms)) },
 };
-import { remarkable, HashNotFoundError } from "rmapi-js";
+import { remarkable } from "rmapi-js";
 import { readFileSync } from "node:fs";
 import { Scene } from "remarkable-annotations";
 // rmapi-js's own parser, to check that it reads the pages we write
 import { parseRmScene } from "../node_modules/rmapi-js/dist/rm6.js";
-import type { RemarkableApi, ItemRef } from "rmapi-js";
+import type { ItemRef } from "rmapi-js";
+import {
+  connectCloud,
+  HashNotFoundError,
+  type RemarkableApi,
+} from "../src/modules/remarkable/cloud";
 import * as client from "../src/modules/remarkable/client";
 import {
   fetchAnnotations,
@@ -54,7 +61,10 @@ async function main() {
   const token = process.env.RM_DEVICE_TOKEN;
   const source = process.env.RM_SOURCE;
   if (!token || !source) throw new Error("set RM_DEVICE_TOKEN and RM_SOURCE");
-  const api = await remarkable(token);
+  // The plugin's cloud client; rmapi-js only for what the plugin does not do
+  // (copying a document as an archive, downloading its PDF).
+  const api = await connectCloud(token);
+  const rmapi = await remarkable(token);
 
   // --- 1. Read the real document (read-only) ---------------------------------
   const items = await api.listItems(true);
@@ -123,8 +133,8 @@ async function main() {
 
   // --- 2. Copy it into the dev folder ------------------------------------------
   const folderId = await client.ensureFolder(api, DEV);
-  const archive = await api.getDocumentArchive(src);
-  const copy = await api.putDocumentArchive(archive, {
+  const archive = await rmapi.getDocumentArchive(src);
+  const copy = await rmapi.putDocumentArchive(archive, {
     parent: folderId,
     visibleName: `devtest copy ${new Date().toISOString().slice(0, 16)}`,
     refresh: true,
@@ -259,7 +269,7 @@ async function main() {
   );
 
   // --- 5. Fresh upload with page list + page tags, then trash and purge ---------
-  const pdf = await api.getPdf(src);
+  const pdf = await rmapi.getPdf(src);
   const pages = (await api.getContent(src)) as any;
   const pageCount = (pages.cPages?.pages?.length ??
     pages.pages?.length) as number;

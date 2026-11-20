@@ -6,7 +6,8 @@
 // "delete" moves the document to the reMarkable trash (recoverable on the
 // device) rather than erasing it.
 
-import type { Entry, RemarkableApi } from "rmapi-js";
+import type { RemarkableApi } from "../remarkable/cloud";
+import type { Entry } from "rmapi-js";
 import { getPref } from "../../utils/prefs";
 import { ensureNetworkGlobals } from "../../utils/globals";
 import { log, errMsg } from "../../utils/log";

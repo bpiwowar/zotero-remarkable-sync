@@ -37,7 +37,6 @@
   "dependencies": {
     "fflate": "^0.8.3",
     "remarkable-annotations": "file:libs/remarkable-annotations/wasm/pkg",
-    "rmapi-js": "^14.4.2",
     "zotero-plugin-toolkit": "^5.1.0-beta.13"
   },
   "devDependencies": {
@@ -51,6 +50,7 @@
     "lint-staged": "^17.0.7",
     "mocha": "^11.7.5",
     "prettier": "^3.7.4",
+    "rmapi-js": "^14.4.2",
     "typescript": "^5.9.3",
     "zotero-plugin-scaffold": "^0.8.2",
     "zotero-types": "^4.1.2"

@@ -6,16 +6,13 @@
 // The WebAssembly module must be loaded first (initAnnotations, called at
 // startup by loadAnnotations in wasm.ts).
 //
-// The cloud helpers at the end (fetchAnnotations, mapPdfPages, ensureFolder,
-// uploadPdf, putPages) still go through rmapi-js, until the library's cloud
-// client replaces it.
+// The document helpers at the end (fetchAnnotations, mapPdfPages,
+// ensureFolder, uploadPdf, putPages) use the library's cloud client
+// (cloud.ts).
 
-import type { DocumentContent, ItemRef, RemarkableApi } from "rmapi-js";
+import type { DocumentContent, ItemRef } from "rmapi-js";
 import * as wasm from "remarkable-annotations";
-// rmapi-js's putRmPages takes its own scene objects; its scene module is not
-// exported, so it is imported from its dist folder (until the library's
-// cloud client replaces rmapi-js).
-import { parseRmScene } from "../../../node_modules/rmapi-js/dist/rm6.js";
+import type { Cloud } from "./cloud";
 
 // --- Types -------------------------------------------------------------
 
@@ -153,11 +150,10 @@ const strip = <T extends { ids?: CrdtId[] }>(items: T[]) =>
 
 // --- Pages ---------------------------------------------------------------
 
-/** Parse a single `.rm` v6 page into its strokes and highlights. */
-export function parseRmPage(bytes: Uint8Array): RmPage {
-  ready();
+/** A page from the library (ids as {author, counter}) in this module's shape. */
+function fromWasmPage(page: unknown): RmPage {
   type FromWasm<T> = Omit<T, "ids"> & { ids?: WasmId[] };
-  const p = wasm.parsePage(bytes) as {
+  const p = page as {
     strokes: FromWasm<RmStroke>[];
     highlights: FromWasm<RmHighlight>[];
     layerId?: WasmId;
@@ -177,6 +173,12 @@ export function parseRmPage(bytes: Uint8Array): RmPage {
     maxCounter: p.maxCounter,
     authors: new Map(p.authors),
   };
+}
+
+/** Parse a single `.rm` v6 page into its strokes and highlights. */
+export function parseRmPage(bytes: Uint8Array): RmPage {
+  ready();
+  return fromWasmPage(wasm.parsePage(bytes));
 }
 
 /**
@@ -304,7 +306,7 @@ export function pdfPathToRm(path: number[], page: PdfPageSize): RmPoint[] {
   return wasm.pdfPathToRm(Float64Array.from(path), page);
 }
 
-// --- Documents (rmapi-js, for now) ---------------------------------------
+// --- Documents ---------------------------------------------------------
 
 export interface PageRef {
   pageUuid: string;
@@ -333,29 +335,6 @@ export interface RmDocAnnotations {
   pages: RmDocPage[];
   pageTags: RmPageTags[];
   content: DocumentContent | null;
-}
-
-/** Group the document's page tags by PDF page index. */
-function pageTagsOf(
-  content: DocumentContent | null,
-  pageIds: string[],
-): RmPageTags[] {
-  const tags = content?.pageTags;
-  if (!tags?.length) return [];
-  const indexOf = pdfIndexByPageId(content, pageIds);
-  const byPage = new Map<number, Set<string>>();
-  for (const t of tags) {
-    const idx = indexOf.get(t.pageId);
-    const name = t.name?.trim();
-    if (idx === undefined || !name) continue; // page gone, or blank tag
-    (byPage.get(idx) ?? byPage.set(idx, new Set()).get(idx)!).add(name);
-  }
-  return [...byPage]
-    .sort(([a], [b]) => a - b)
-    .map(([pdfPageIndex, names]) => ({
-      pdfPageIndex,
-      names: [...names].sort(),
-    }));
 }
 
 /** Map each reMarkable page uuid to its 0-based PDF page index. */
@@ -387,106 +366,42 @@ function orderedPageIds(content: DocumentContent | null): string[] {
   return [];
 }
 
-/** A document's content and its page uuids, mapped to PDF pages and `.rm` files. */
-async function readDoc(api: RemarkableApi, id: string, hash: string) {
-  const ref = { id, hash };
-  const [{ entries }, content] = await Promise.all([
-    api.raw.getEntries(ref),
-    api.getContent(ref).then(
-      (c) => c as DocumentContent,
-      () => null,
-    ),
-  ]);
-  const rmByPage = new Map<string, { id: string; hash: string }>();
-  for (const e of entries) {
-    if (e.id.endsWith(".rm")) {
-      const base = e.id.slice(0, -3).split("/").pop()!; // strip dir + ".rm"
-      rmByPage.set(base, { id: e.id, hash: e.hash });
-    }
-  }
-  const pageIds = orderedPageIds(content);
-  const pdfIndex = pdfIndexByPageId(content, pageIds);
-  return { content, pageIds, pdfIndex, rmByPage };
-}
-
 /** Fetch and parse every annotated page of a reMarkable document. */
 export async function fetchAnnotations(
-  api: RemarkableApi,
+  api: Cloud,
   id: string,
   hash: string,
 ): Promise<RmDocAnnotations> {
-  const { content, pageIds, pdfIndex, rmByPage } = await readDoc(api, id, hash);
-  const pages: RmDocPage[] = [];
-  for (const pageUuid of pageIds) {
-    const ent = rmByPage.get(pageUuid);
-    if (!ent) continue; // page has no annotation layer
-    let parsed: RmPage;
-    try {
-      parsed = parseRmPage(await api.raw.getHash(ent));
-    } catch {
-      continue;
-    }
-    if (!parsed.strokes.length && !parsed.highlights.length) continue;
-    pages.push({
-      pdfPageIndex: pdfIndex.get(pageUuid)!,
+  const r = await api.fetchAnnotations({ id, hash });
+  return {
+    pages: r.pages.map(({ pdfPageIndex, pageUuid, page }) => ({
+      pdfPageIndex,
       pageUuid,
-      page: parsed,
-    });
-  }
-  return { pages, pageTags: pageTagsOf(content, pageIds), content };
+      page: fromWasmPage(page),
+    })),
+    pageTags: r.pageTags,
+    content: r.content,
+  };
 }
 
 /**
  * Map each PDF page index to its reMarkable page uuid and existing `.rm` entry
  * (if any): which page file to modify when pushing.
  */
-export async function mapPdfPages(
-  api: RemarkableApi,
+export function mapPdfPages(
+  api: Cloud,
   id: string,
   hash: string,
 ): Promise<Map<number, PageRef>> {
-  const { pageIds, pdfIndex, rmByPage } = await readDoc(api, id, hash);
-  const byPdfIndex = new Map<number, PageRef>();
-  for (const pageUuid of pageIds) {
-    byPdfIndex.set(pdfIndex.get(pageUuid)!, {
-      pageUuid,
-      rmEntry: rmByPage.get(pageUuid),
-    });
-  }
-  return byPdfIndex;
+  return api.mapPdfPages({ id, hash });
 }
 
 /**
  * Resolve a "/"-separated folder path to a collection id, creating any missing
  * folders along the way. Returns "" for the root.
  */
-export async function ensureFolder(
-  api: RemarkableApi,
-  path: string,
-): Promise<string> {
-  const parts = path
-    .split("/")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length === 0) return "";
-
-  const items = await api.listItems(true);
-  let parent = "";
-  for (const name of parts) {
-    const found = items.find(
-      (e) =>
-        e.type === "CollectionType" &&
-        e.visibleName === name &&
-        (e.parent ?? "") === parent,
-    );
-    if (found) {
-      parent = found.id;
-    } else {
-      const created = await api.putFolder(name, { parent });
-      parent = created.id;
-    }
-  }
-  return parent;
+export function ensureFolder(api: Cloud, path: string): Promise<string> {
+  return api.ensureFolder(path);
 }
 
 export interface UploadPdfOptions {
@@ -500,49 +415,37 @@ export interface UploadPdfOptions {
 
 /**
  * Upload a PDF into a folder, returning the new document's ref. With the page
- * count, the placeholder one-page list rmapi-js writes is replaced by the full
- * page list (and page tags), so annotations can be written right away.
+ * count, the document gets one page per PDF page (and the page tags) right
+ * away, instead of a placeholder page the tablet replaces when opening it, so
+ * annotations can be written at once.
  */
-export async function uploadPdf(
-  api: RemarkableApi,
+export function uploadPdf(
+  api: Cloud,
   visibleName: string,
   bytes: Uint8Array,
   folderId: string,
   opts: UploadPdfOptions = {},
 ): Promise<ItemRef> {
   const { tags = [], pageCount, pageTags = {} } = opts;
-  const ref = await api.putPdf(visibleName, bytes, { parent: folderId, tags });
-  if (!pageCount || pageCount < 1) return ref;
-  const pages = Array.from({ length: pageCount }, () =>
-    globalThis.crypto.randomUUID(),
+  return api.uploadPdf(
+    visibleName,
+    bytes,
+    folderId,
+    tags,
+    pageCount && pageCount >= 1 ? pageCount : undefined,
+    pageTags,
   );
-  const now = Date.now();
-  return api.updateDocument(ref, {
-    originalPageCount: pages.length,
-    pageCount: pages.length,
-    pages,
-    redirectionPageMap: pages.map((_, i) => i),
-    pageTags: Object.entries(pageTags).flatMap(([idx, names]) => {
-      const pageId = pages[Number(idx)];
-      return pageId
-        ? names.map((name) => ({ name, pageId, timestamp: now }))
-        : [];
-    }),
-  } as Partial<DocumentContent>);
 }
 
 /**
  * Replace the `.rm` files of some pages of a document in one commit. Fails with
- * rmapi-js's HashNotFoundError if the document changed since `ref` was read.
+ * HashNotFoundError if the document changed since `ref` was read.
  */
 export async function putPages(
-  api: RemarkableApi,
+  api: Cloud,
   ref: ItemRef,
   pages: Map<string, Uint8Array>,
 ): Promise<ItemRef> {
   if (pages.size === 0) return ref;
-  const scenes = new Map(
-    [...pages].map(([pageId, bytes]) => [pageId, parseRmScene(bytes)]),
-  );
-  return api.putRmPages(ref, scenes);
+  return api.putRmPages(ref, pages);
 }

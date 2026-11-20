@@ -17,7 +17,8 @@ import {
   markSynced,
   type SyncRecord,
 } from "./state";
-import type { ItemRef, RemarkableApi } from "rmapi-js";
+import type { RemarkableApi } from "../remarkable/cloud";
+import type { ItemRef } from "rmapi-js";
 import type { RmDocPage } from "../remarkable/annotations";
 import { keyedAuthors } from "../remarkable/zkey";
 import { applyAnnotations, existingSig } from "./annotations";

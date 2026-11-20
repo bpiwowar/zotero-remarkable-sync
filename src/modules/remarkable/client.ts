@@ -1,8 +1,8 @@
-// Thin wrapper around rmapi-js, adapting it to the plugin: credential storage
-// in prefs and logging. Document operations live in remarkable-annotations.
+// The reMarkable cloud for the plugin: credential storage in prefs, and
+// logging. The cloud client is remarkable-annotations' (cloud.ts).
 
-import { register, remarkable } from "rmapi-js";
-import type { Entry, ItemRef, RemarkableApi } from "rmapi-js";
+import type { Entry, ItemRef } from "rmapi-js";
+import { connectCloud, register, type RemarkableApi } from "./cloud";
 import * as rm from "./annotations";
 import type { UploadPdfOptions } from "./annotations";
 import { getPref, setPref, clearPref } from "../../utils/prefs";
@@ -28,7 +28,7 @@ export function isConnected(): boolean {
  */
 export async function connect(code: string): Promise<void> {
   ensureNetworkGlobals();
-  const token = await register(code.trim(), { deviceDesc: "browser-chrome" });
+  const token = await register(code.trim(), "browser-chrome");
   setPref("deviceToken", token);
   cachedApi = null;
 }
@@ -44,7 +44,7 @@ export async function getApi(): Promise<RemarkableApi> {
   ensureNetworkGlobals();
   const token = getPref("deviceToken");
   if (!token) throw new NotConnectedError();
-  cachedApi = await remarkable(token);
+  cachedApi = await connectCloud(token);
   return cachedApi;
 }
 
@@ -55,7 +55,7 @@ export function resetApi(): void {
 
 export { ensureFolder, putPages } from "./annotations";
 
-/** Upload a PDF into a folder (see remarkable-annotations' `uploadPdf`). */
+/** Upload a PDF into a folder (see `uploadPdf` in annotations.ts). */
 export async function uploadPdf(
   api: RemarkableApi,
   visibleName: string,
@@ -86,7 +86,7 @@ export async function trashDoc(
   api: RemarkableApi,
   ref: ItemRef,
 ): Promise<void> {
-  await api.move(ref, "trash"); // rmapi-js retries generation conflicts
+  await api.move(ref, "trash"); // generation conflicts are retried
 }
 
 /** Permanently delete a document (not recoverable from the device trash). */

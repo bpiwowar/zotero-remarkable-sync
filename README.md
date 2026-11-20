@@ -20,8 +20,10 @@ PDFs **and annotations** in sync with a [reMarkable](https://remarkable.com/) ta
 - **Bidirectional** — PDFs go up; highlights and ink strokes made on the device come
   back as **native Zotero annotations**.
 - **On demand or scheduled** — sync from a context menu / button, or on a timer.
-- **Pure TypeScript** — talks to the reMarkable cloud directly via
-  [`rmapi-js`](https://github.com/erikbrinkman/rmapi-js); no external binary required.
+- **Self-contained** — talks to the reMarkable cloud directly through the
+  [remarkable-annotations](https://github.com/bpiwowar/remarkable-annotations)
+  library, compiled to WebAssembly and shipped in the plugin; no external binary
+  required.
 
 > Status: early development. See [`MILESTONES`](#milestones) below.
 
@@ -57,7 +59,8 @@ to the PDF, PDF page sizes) is the
 [`libs/remarkable-annotations`](libs/remarkable-annotations). Its npm package is
 built from the submodule (`npm run build:wasm`, needs Rust and wasm-pack) before
 `npm install`. [`src/modules/remarkable/annotations.ts`](src/modules/remarkable/annotations.ts)
-wraps it for the sync code; uploads and page writes still go through rmapi-js.
+wraps it for the sync code, and [`cloud.ts`](src/modules/remarkable/cloud.ts)
+makes the requests its cloud client asks for.
 The plugin keeps the Zotero side: credentials, the sync engine and the UI.
 
 ### Connecting to reMarkable
@@ -350,7 +353,7 @@ enforces on new items, and how commits work are in the
 [`remarkable-annotations` README](https://github.com/bpiwowar/remarkable-annotations#readme).
 
 Each write names the document hash read at the start of the push. If the
-document changed on the cloud since (new ink from the tablet), rmapi-js refuses
+document changed on the cloud since (new ink from the tablet), the cloud client refuses
 the write with `HashNotFoundError`. Nothing is overwritten: the document is
 counted as skipped, and the next sync pulls the new ink before pushing again.
 
@@ -484,8 +487,9 @@ state of each synced paper (over its PDFs) and of each synced PDF row:
 
 Built on [`windingwind/zotero-plugin-template`](https://github.com/windingwind/zotero-plugin-template)
 and [`zotero-plugin-toolkit`](https://github.com/windingwind/zotero-plugin-toolkit).
-reMarkable cloud access and `.rm` v6 parsing/serialization via
-[`rmapi-js`](https://github.com/erikbrinkman/rmapi-js); `.rm` format understanding
+reMarkable cloud access and `.rm` v6 parsing/serialization are ported from
+[`rmapi-js`](https://github.com/erikbrinkman/rmapi-js) (in
+remarkable-annotations); `.rm` format understanding
 draws on [`rmscene`](https://github.com/ricklupton/rmscene) and
 [`rmc`](https://github.com/ricklupton/rmc).
 

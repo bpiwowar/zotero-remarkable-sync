@@ -9,8 +9,9 @@
 
 import { ensureNetworkGlobals } from "../../utils/globals";
 import { log, errMsg } from "../../utils/log";
-import { HashNotFoundError } from "rmapi-js";
-import type { DocumentContent, ItemRef, RemarkableApi } from "rmapi-js";
+import { HashNotFoundError } from "../remarkable/cloud";
+import type { RemarkableApi } from "../remarkable/cloud";
+import type { DocumentContent, ItemRef } from "rmapi-js";
 import * as client from "../remarkable/client";
 import {
   mapPdfPages,
