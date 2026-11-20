@@ -1,6 +1,7 @@
 // The reMarkable cloud, through remarkable-annotations' sans-I/O client
 // (WebAssembly): the library decides which requests to make, this module
-// makes them (fetch) and waits between retries.
+// makes them (fetch; independent ones concurrently) and waits between
+// retries.
 //
 // `Cloud` has the methods of rmapi-js's RemarkableApi that the sync code uses,
 // with the same results; rmapi-js's types describe them.
@@ -55,15 +56,23 @@ function cloudError(error: {
 
 // --- Running operations ----------------------------------------------------
 
+type Request = {
+  type: "request";
+  method: string;
+  url: string;
+  headers: [string, string][];
+  body?: Uint8Array;
+};
+type Sleep = { type: "sleep"; ms: number };
+type Response =
+  | { status: number; statusText: string; body: Uint8Array }
+  | { networkError: string };
+
 type Step =
-  | {
-      type: "request";
-      method: string;
-      url: string;
-      headers: [string, string][];
-      body?: Uint8Array;
-    }
-  | { type: "sleep"; ms: number }
+  | Request
+  | Sleep
+  /** independent requests and sleeps (rmapi-js's Promise.all) */
+  | { type: "batch"; items: (Request | Sleep)[] }
   | { type: "done"; json?: string; bytes?: Uint8Array; text?: string }
   | {
       type: "error";
@@ -74,32 +83,59 @@ type Done = Extract<Step, { type: "done" }>;
 
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 
+/** At most this many requests in flight for a batch. */
+const MAX_IN_FLIGHT = 16;
+
+/** Make one request, or wait before a retry. */
+async function perform(item: Request | Sleep): Promise<Response | undefined> {
+  if (item.type === "sleep") {
+    // The library gives the longest wait; spread retries (as rmapi-js).
+    await sleep(Math.random() * item.ms);
+    return undefined;
+  }
+  try {
+    const r = await fetch(item.url, {
+      method: item.method,
+      headers: item.headers,
+      body: item.body,
+    });
+    return {
+      status: r.status,
+      statusText: r.statusText,
+      body: new Uint8Array(await r.arrayBuffer()),
+    };
+  } catch (e) {
+    return { networkError: String(e) };
+  }
+}
+
+/** Perform a batch's items concurrently (at most MAX_IN_FLIGHT at once). */
+async function performAll(
+  items: (Request | Sleep)[],
+): Promise<(Response | undefined)[]> {
+  const out: (Response | undefined)[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await perform(items[i]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(MAX_IN_FLIGHT, items.length) }, worker),
+  );
+  return out;
+}
+
 /** Run an operation to its end: make its requests, wait between retries. */
 export async function run(op: wasm.CloudOperation): Promise<Done> {
   try {
     let step = op.start() as Step;
     for (;;) {
-      if (step.type === "request") {
-        let response;
-        try {
-          const r = await fetch(step.url, {
-            method: step.method,
-            headers: step.headers,
-            body: step.body,
-          });
-          response = {
-            status: r.status,
-            statusText: r.statusText,
-            body: new Uint8Array(await r.arrayBuffer()),
-          };
-        } catch (e) {
-          response = { networkError: String(e) };
-        }
-        step = op.resume(response) as Step;
-      } else if (step.type === "sleep") {
-        // The library gives the longest wait; spread retries (as rmapi-js).
-        await sleep(Math.random() * step.ms);
-        step = op.resume(undefined) as Step;
+      if (step.type === "batch") {
+        step = op.resumeBatch(await performAll(step.items)) as Step;
+      } else if (step.type === "request" || step.type === "sleep") {
+        step = op.resume(await perform(step)) as Step;
       } else if (step.type === "done") {
         return step;
       } else {
