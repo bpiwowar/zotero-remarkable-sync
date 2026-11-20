@@ -16,14 +16,14 @@ import {
   mapPdfPages,
   pdfIndexByPageId,
   type PageRef,
-} from "remarkable-annotations";
-import { parseRmPage } from "remarkable-annotations";
-import type { RmStroke, RmHighlight, CrdtId } from "remarkable-annotations";
+} from "../remarkable/annotations";
+import { parseRmPage } from "../remarkable/annotations";
+import type { RmStroke, RmHighlight, CrdtId } from "../remarkable/annotations";
 import {
   rebuildPage,
   splitStructure,
   blankStructure,
-} from "remarkable-annotations";
+} from "../remarkable/annotations";
 import { zoteroToRm } from "../remarkable/colors";
 import {
   readPdfPageSizes,
@@ -32,7 +32,7 @@ import {
   pdfPathToRm,
   pdfWidthToRm,
   type PdfPageSize,
-} from "remarkable-annotations";
+} from "../remarkable/annotations";
 import {
   allRecords,
   setRecord,

@@ -1,5 +1,11 @@
+import { copyFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
+
+// The annotation library's WebAssembly module, loaded at startup from
+// chrome://<addonRef>/content/wasm/ (src/modules/remarkable/wasm.ts).
+const WASM = "remarkable_annotations_wasm_bg.wasm";
 
 export default defineConfig({
   source: ["src", "addon"],
@@ -25,6 +31,16 @@ export default defineConfig({
     },
     prefs: {
       prefix: pkg.config.prefsPrefix,
+    },
+    hooks: {
+      "build:copyAssets": (ctx) => {
+        const dir = join(ctx.dist, "addon/content/wasm");
+        mkdirSync(dir, { recursive: true });
+        copyFileSync(
+          join("node_modules/remarkable-annotations", WASM),
+          join(dir, WASM),
+        );
+      },
     },
     esbuildOptions: [
       {

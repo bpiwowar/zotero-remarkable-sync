@@ -2,6 +2,7 @@ import { config } from "../package.json";
 import { DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
 import { createZToolkit } from "./utils/ztoolkit";
+import * as annotations from "./modules/remarkable/annotations";
 
 class Addon {
   public data: {
@@ -22,7 +23,7 @@ class Addon {
   // Lifecycle hooks
   public hooks: typeof hooks;
   // APIs
-  public api: object;
+  public api: { annotations: typeof annotations };
 
   constructor() {
     this.data = {
@@ -33,7 +34,7 @@ class Addon {
       ztoolkit: createZToolkit(),
     };
     this.hooks = hooks;
-    this.api = {};
+    this.api = { annotations };
   }
 }
 

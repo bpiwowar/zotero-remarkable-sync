@@ -1,0 +1,30 @@
+name: Setup
+description: >
+  Node, the remarkable-annotations submodule built for npm (Rust, wasm-pack),
+  then npm ci. The package is installed from libs/remarkable-annotations/wasm/pkg
+  until it is published on npm.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup JS (with submodules, no install yet)
+      uses: zotero-plugin-dev/workflows/setup-js@main
+      with:
+        fetch-all: "true"
+        auto-install: "false"
+    - name: Rust for WebAssembly
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: libs/remarkable-annotations
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: wasm-pack@0.15.1
+    - name: Build remarkable-annotations for npm
+      shell: bash
+      run: npm run build:wasm
+    - name: Install
+      shell: bash
+      run: npm ci

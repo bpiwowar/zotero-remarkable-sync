@@ -31,12 +31,12 @@
     "update-deps": "npm update --save",
     "prepare": "husky",
     "devtest": "esbuild scripts/devtest.ts --bundle --platform=node --format=esm --outfile=.scaffold/devtest.mjs --log-level=error && node .scaffold/devtest.mjs",
-    "test:shared": "esbuild src/modules/remarkable/zkey.ts --bundle --format=esm --outfile=.scaffold/zkey.mjs --log-level=error && esbuild packages/remarkable-annotations/src/index.ts --bundle --format=esm --outfile=.scaffold/annotations.mjs --log-level=error && esbuild src/modules/sync/state.ts --bundle --format=esm --outfile=.scaffold/state.mjs --log-level=error && node test/shared.verify.mjs",
-    "test:annotations": "npm test -w remarkable-annotations"
+    "test:shared": "esbuild src/modules/remarkable/zkey.ts --bundle --format=esm --outfile=.scaffold/zkey.mjs --log-level=error && esbuild src/modules/remarkable/annotations.ts --bundle --format=esm --outfile=.scaffold/annotations.mjs --log-level=error && esbuild src/modules/sync/state.ts --bundle --format=esm --outfile=.scaffold/state.mjs --log-level=error && node test/shared.verify.mjs",
+    "build:wasm": "libs/remarkable-annotations/wasm/build-npm.sh"
   },
   "dependencies": {
     "fflate": "^0.8.3",
-    "remarkable-annotations": "*",
+    "remarkable-annotations": "file:libs/remarkable-annotations/wasm/pkg",
     "rmapi-js": "^14.4.2",
     "zotero-plugin-toolkit": "^5.1.0-beta.13"
   },
@@ -73,8 +73,5 @@
         }
       }
     ]
-  },
-  "workspaces": [
-    "packages/*"
-  ]
+  }
 }

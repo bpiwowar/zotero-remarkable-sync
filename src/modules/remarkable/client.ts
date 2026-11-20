@@ -3,8 +3,8 @@
 
 import { register, remarkable } from "rmapi-js";
 import type { Entry, ItemRef, RemarkableApi } from "rmapi-js";
-import * as rm from "remarkable-annotations";
-import type { UploadPdfOptions } from "remarkable-annotations";
+import * as rm from "./annotations";
+import type { UploadPdfOptions } from "./annotations";
 import { getPref, setPref, clearPref } from "../../utils/prefs";
 import { ensureNetworkGlobals } from "../../utils/globals";
 import { log } from "../../utils/log";
@@ -53,7 +53,7 @@ export function resetApi(): void {
   cachedApi = null;
 }
 
-export { ensureFolder, putPages } from "remarkable-annotations";
+export { ensureFolder, putPages } from "./annotations";
 
 /** Upload a PDF into a folder (see remarkable-annotations' `uploadPdf`). */
 export async function uploadPdf(

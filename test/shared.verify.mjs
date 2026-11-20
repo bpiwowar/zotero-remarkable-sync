@@ -4,6 +4,7 @@
 // Run via `npm run test:shared` (bundles first).
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -11,7 +12,19 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { keyToUuid, uuidToKey, keyedAuthors } = await import(
   join(root, ".scaffold/zkey.mjs")
 );
-const { parseRmPage } = await import(join(root, ".scaffold/annotations.mjs"));
+const { parseRmPage, initAnnotations } = await import(
+  join(root, ".scaffold/annotations.mjs")
+);
+initAnnotations(
+  new Uint8Array(
+    readFileSync(
+      join(
+        root,
+        "node_modules/remarkable-annotations/remarkable_annotations_wasm_bg.wasm",
+      ),
+    ),
+  ),
+);
 const { rebuildPage, blankStructure } = await import(
   join(root, ".scaffold/annotations.mjs")
 );

@@ -14,9 +14,9 @@ import {
   inkWidth,
   pageSizeAt,
   type PdfPageSize,
-} from "remarkable-annotations";
-import type { RmDocPage, RmPageTags } from "remarkable-annotations";
-import type { RmHighlight, RmStroke } from "remarkable-annotations";
+} from "../remarkable/annotations";
+import type { RmDocPage, RmPageTags } from "../remarkable/annotations";
+import type { RmHighlight, RmStroke } from "../remarkable/annotations";
 import { rmToZoteroHex } from "../remarkable/colors";
 import { log, errMsg } from "../../utils/log";
 import type { PulledSource } from "./state";

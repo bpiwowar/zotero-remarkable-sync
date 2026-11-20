@@ -10,6 +10,7 @@ import * as scheduler from "./modules/scheduler";
 import * as engine from "./modules/sync/engine";
 import * as column from "./modules/column";
 import { preload as preloadState } from "./modules/sync/state";
+import { loadAnnotations } from "./modules/remarkable/wasm";
 
 // Build marker — bump when shipping a build you want to confirm is loaded.
 const BUILD = "v0.2.0-safe-mode";
@@ -25,6 +26,13 @@ async function onStartup() {
 
   log(`reMarkable Sync loaded — build ${BUILD}`);
   initLocale();
+
+  // The annotation library (WebAssembly): needed before any sync.
+  try {
+    await loadAnnotations();
+  } catch (e) {
+    log(`reMarkable Sync: cannot load the annotation library: ${errMsg(e)}`);
+  }
 
   // Register the Settings pane and the item-pane status section (both global,
   // registered once — not per window).

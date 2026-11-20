@@ -14,8 +14,12 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GitHub_TOKEN }}
     steps:
-      - name: Setup JS
-        uses: zotero-plugin-dev/workflows/setup-js@main
+      # actions/checkout first: the local setup action lives in the repository
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - name: Setup
+        uses: ./.github/actions/setup
       - name: Run Lint
         run: npm run lint:check
 
@@ -24,8 +28,12 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GitHub_TOKEN }}
     steps:
-      - name: Setup JS
-        uses: zotero-plugin-dev/workflows/setup-js@main
+      # actions/checkout first: the local setup action lives in the repository
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - name: Setup
+        uses: ./.github/actions/setup
       - name: Run Build
         run: npm run build
       - name: Upload build result
@@ -39,6 +47,10 @@ jobs:
     needs:
       - build
     steps:
-      - name: Setup JS
-        uses: zotero-plugin-dev/workflows/setup-js@main
+      # actions/checkout first: the local setup action lives in the repository
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - name: Setup
+        uses: ./.github/actions/setup
       - run: npm run test

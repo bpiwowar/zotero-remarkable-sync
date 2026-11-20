@@ -44,17 +44,21 @@ npm start          # launch Zotero with hot-reload
 npm run build      # build the .xpi and type-check
 npm test           # run unit tests (in Zotero)
 npm run lint:fix   # format + lint
-npm run test:annotations && npm run test:shared && npm run test:polyfills
-                   # offline checks: .rm reader/writer, sync note, polyfills
+npm run test:shared && npm run test:polyfills
+                   # offline checks: sync note and keyed pages, polyfills
 RM_DEVICE_TOKEN=... RM_SOURCE="<title prefix>" npm run devtest
                    # live round trip on the cloud; writes only in "zotrem-dev"
 ```
 
-The reMarkable side (reading and writing `.rm` pages, mapping pages and coordinates
-to the PDF, uploads) lives in the `remarkable-annotations` workspace package
-([`packages/remarkable-annotations`](packages/remarkable-annotations)), which has no
-Zotero dependency. The plugin keeps the Zotero side: credentials, the sync engine
-and the UI.
+The reMarkable side (reading and writing `.rm` pages, shapes, mapping coordinates
+to the PDF, PDF page sizes) is the
+[remarkable-annotations](https://github.com/bpiwowar/remarkable-annotations) library
+(Rust, compiled to WebAssembly), a git submodule in
+[`libs/remarkable-annotations`](libs/remarkable-annotations). Its npm package is
+built from the submodule (`npm run build:wasm`, needs Rust and wasm-pack) before
+`npm install`. [`src/modules/remarkable/annotations.ts`](src/modules/remarkable/annotations.ts)
+wraps it for the sync code; uploads and page writes still go through rmapi-js.
+The plugin keeps the Zotero side: credentials, the sync engine and the UI.
 
 ### Connecting to reMarkable
 
@@ -148,7 +152,7 @@ reopened on it.
 | `safeMode`       | `true` (default), `false`      | When on, nothing on the tablet is modified except uploading PDFs. This skips the whole annotation push, including page-tag removals ([`pushAnnotations`](src/modules/sync/push.ts#L234), [`isSafeMode`](src/modules/sync/engine.ts#L68)). |
 | `deleteOnUnsync` | `true` (default), `false`      | The default button of the "Remove from sync" dialog: delete the document on the reMarkable, or keep it.                                                                                                                                   |
 | `syncTag`        | default `@remarkable`          | The tag that marks items for sync.                                                                                                                                                                                                        |
-| `folder`         | default `Zotero`               | Destination folder on the reMarkable, created if missing ([`ensureFolder`](packages/remarkable-annotations/src/document.ts#L11)).                                                                                                         |
+| `folder`         | default `Zotero`               | Destination folder on the reMarkable, created if missing ([`ensureFolder`](src/modules/remarkable/annotations.ts)).                                                                                                                       |
 
 #### Scope: all items or one item
 
@@ -236,7 +240,7 @@ itself:
   and text) are removed too: leftovers of a push whose tracking was lost.
 
 The tablet keeps these author entries when it saves the page
-([rules the tablet enforces](packages/remarkable-annotations/README.md#rules-the-tablet-enforces)). A page
+([rules the tablet enforces](https://github.com/bpiwowar/remarkable-annotations#rules-the-tablet-enforces)). A page
 holds at most 255 authors. Past that, annotations are written under the page's
 own author, as before.
 
@@ -273,10 +277,10 @@ follows:
 
 #### Uploading with the real page list
 
-[`uploadPdf`](packages/remarkable-annotations/src/document.ts) writes one page per PDF page, using the
+[`uploadPdf`](src/modules/remarkable/annotations.ts) writes one page per PDF page, using the
 page count from [`pdfPageCount`](src/modules/sync/engine.ts#L46), so
 annotations can be pushed before the document is opened on the tablet (see
-[the package README](packages/remarkable-annotations/README.md#uploading-with-the-real-page-list)).
+[`uploadPdf`](src/modules/remarkable/annotations.ts)).
 
 ### Phase 2: annotation push (Zotero → reMarkable)
 
@@ -337,13 +341,13 @@ tablet and is skipped.
 
 #### Reading, writing and committing pages
 
-Pages are read with [`parseRmPage`](packages/remarkable-annotations/src/rmlines.ts) and rewritten with
-[`rebuildPage`](packages/remarkable-annotations/src/rmwrite.ts), which drops our previous items (and
+Pages are read with [`parseRmPage`](src/modules/remarkable/annotations.ts) and rewritten with
+[`rebuildPage`](src/modules/remarkable/annotations.ts), which drops our previous items (and
 pulled items deleted in Zotero) by id and appends the current ones. All pages
-of a document go in one commit ([`putPages`](packages/remarkable-annotations/src/document.ts)); page-tag
+of a document go in one commit ([`putPages`](src/modules/remarkable/annotations.ts)); page-tag
 removals use `updateDocument`. How pages are parsed, the rules the tablet
 enforces on new items, and how commits work are in the
-[`remarkable-annotations` README](packages/remarkable-annotations/README.md).
+[`remarkable-annotations` README](https://github.com/bpiwowar/remarkable-annotations#readme).
 
 Each write names the document hash read at the start of the push. If the
 document changed on the cloud since (new ink from the tablet), rmapi-js refuses
@@ -354,9 +358,9 @@ counted as skipped, and the next sync pulls the new ink before pushing again.
 
 [`pullAll`](src/modules/sync/engine.ts#L360) skips a document whose hash
 equals `rec.lastPulledVersion`, unless forced. Otherwise
-[`fetchAnnotations`](packages/remarkable-annotations/src/rmdoc.ts) reads every annotated page and the
+[`fetchAnnotations`](src/modules/remarkable/annotations.ts) reads every annotated page and the
 page tags, by PDF page (see
-[the package README](packages/remarkable-annotations/README.md#pages-and-pdf-pages)).
+[the library README](https://github.com/bpiwowar/remarkable-annotations#pages-and-pdf-pages)).
 
 [`applyAnnotations`](src/modules/sync/annotations.ts#L471) then mirrors the
 device onto the attachment.

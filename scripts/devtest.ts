@@ -16,12 +16,19 @@ import "../src/utils/polyfills";
   Promise: { delay: (ms: number) => new Promise((r) => setTimeout(r, ms)) },
 };
 import { remarkable, HashNotFoundError } from "rmapi-js";
-import { parseRmScene, serializeRmScene } from "remarkable-annotations";
+import { readFileSync } from "node:fs";
+import { Scene } from "remarkable-annotations";
+// rmapi-js's own parser, to check that it reads the pages we write
+import { parseRmScene } from "../node_modules/rmapi-js/dist/rm6.js";
 import type { RemarkableApi, ItemRef } from "rmapi-js";
 import * as client from "../src/modules/remarkable/client";
-import { fetchAnnotations, mapPdfPages } from "remarkable-annotations";
-import { parseRmPage } from "remarkable-annotations";
-import { rebuildPage } from "remarkable-annotations";
+import {
+  fetchAnnotations,
+  initAnnotations,
+  mapPdfPages,
+  parseRmPage,
+  rebuildPage,
+} from "../src/modules/remarkable/annotations";
 
 const DEV = "zotrem-dev";
 let failures = 0;
@@ -37,6 +44,13 @@ async function docRef(api: RemarkableApi, id: string): Promise<ItemRef> {
 }
 
 async function main() {
+  initAnnotations(
+    new Uint8Array(
+      readFileSync(
+        "node_modules/remarkable-annotations/remarkable_annotations_wasm_bg.wasm",
+      ),
+    ),
+  );
   const token = process.env.RM_DEVICE_TOKEN;
   const source = process.env.RM_SOURCE;
   if (!token || !source) throw new Error("set RM_DEVICE_TOKEN and RM_SOURCE");
@@ -79,17 +93,22 @@ async function main() {
   let roundTrips = 0;
   for (const e of entries.filter((x) => x.id.endsWith(".rm"))) {
     const bytes = await api.raw.getHash(e);
-    let scene;
+    let scene: Scene;
     try {
-      scene = parseRmScene(bytes);
+      scene = new Scene(bytes);
     } catch {
       continue; // not v6
     }
     pagesRead++;
-    opaque += scene.blocks.filter(
-      (b) => b.type === "unknown" && [0x03, 0x05].includes(b.blockType),
+    const blocks = JSON.parse(scene.blocksJson()) as {
+      type: string;
+      blockType?: number;
+    }[];
+    opaque += blocks.filter(
+      (b) => b.type === "unknown" && [0x03, 0x05].includes(b.blockType ?? -1),
     ).length;
-    const again = serializeRmScene(scene);
+    const again = scene.serialize();
+    scene.free();
     if (again.length === bytes.length && again.every((b, i) => b === bytes[i]))
       roundTrips++;
   }
