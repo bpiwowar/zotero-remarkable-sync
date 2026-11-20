@@ -1,0 +1,4 @@
+[submodule "libs/remarkable-annotations"]
+	path = libs/remarkable-annotations
+	url = https://github.com/bpiwowar/remarkable-annotations.git
+	branch = main

@@ -7,3 +7,5 @@ node_modules
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
+# git submodule, formatted by its own tooling
+libs

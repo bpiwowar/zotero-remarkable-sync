@@ -3,6 +3,10 @@
 import zotero from "@zotero-plugin/eslint-config";
 
 export default zotero({
+  ignores: [
+    // git submodule, linted by its own tooling
+    "libs/**",
+  ],
   overrides: [
     {
       files: ["**/*.ts"],
