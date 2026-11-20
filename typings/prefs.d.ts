@@ -9,6 +9,9 @@ declare namespace _ZoteroTypes {
     PluginPrefsMap: {
       "syncTag": string;
       "folder": string;
+      "folderPath": string;
+      "folderId": string;
+      "folderParent": string;
       "deviceToken": string;
       "syncMode": string;
       "syncInterval": number;

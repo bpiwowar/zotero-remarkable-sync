@@ -4,6 +4,11 @@
 pref("syncTag", "@remarkable");
 // Destination folder on the reMarkable (top-level name or "/"-separated path).
 pref("folder", "Zotero");
+// The folder's id and parent once resolved (for the "folder" path in
+// "folderPath"), so that syncs only check it is still there.
+pref("folderPath", "");
+pref("folderId", "");
+pref("folderParent", "");
 // reMarkable device token obtained from the one-time code (empty = not connected).
 pref("deviceToken", "");
 // Sync trigger: "manual" (on demand only) or "interval" (timer).

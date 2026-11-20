@@ -311,7 +311,7 @@ export async function pushAnnotations(
   if (keys.length === 0) return summary;
 
   const api = await client.getApi();
-  const remote = await api.listItems(true);
+  const remote = await api.listRefs(true);
   const byId = new Map(remote.map((e) => [e.id, e]));
 
   let done = 0;

@@ -156,6 +156,19 @@ export class Cloud {
       (await run(this.session.getHash(ref.id, ref.hash))).bytes!,
   };
 
+  /** The id and hash of every item: the root listing only (cached; `refresh`
+   *  reads the cloud's root again). */
+  listRefs(refresh = false): Promise<ItemRef[]> {
+    return json(this.session.listRefs(refresh));
+  }
+
+  /** An item's `.metadata` (name, type, parent). */
+  getMetadata(
+    ref: ItemRef,
+  ): Promise<{ visibleName: string; type: string; parent?: string }> {
+    return json(this.session.getMetadata(ref.id, ref.hash));
+  }
+
   /** Every document and folder (cached; `refresh` reads the cloud again). */
   listItems(refresh = false): Promise<Entry[]> {
     return json(this.session.listItems(refresh));

@@ -322,7 +322,7 @@ export async function pushAll(
 
   // The device documents that currently exist — so we can detect docs deleted on
   // the reMarkable and stop syncing them (rather than re-uploading).
-  const deviceDocIds = new Set((await api.listItems()).map((e) => e.id));
+  const deviceDocIds = new Set((await api.listRefs()).map((e) => e.id));
   // Built on first need: unlinked folder documents, by PDF hash.
   let byPdfHash: Map<string, ItemRef[]> | undefined;
 
@@ -615,8 +615,8 @@ export async function pullAll(
   const api = await client.getApi();
   progress?.("Checking reMarkable for annotations…", 0);
 
-  // Snapshot the cloud listing once, then look up each doc by id.
-  const remote = await api.listItems(true);
+  // Snapshot the cloud listing once (ids and hashes), then look up each doc.
+  const remote = await api.listRefs(true);
   const byId = new Map(remote.map((e) => [e.id, e]));
 
   const ok: string[] = []; // checked without error

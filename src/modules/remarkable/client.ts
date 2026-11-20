@@ -7,7 +7,7 @@ import * as rm from "./annotations";
 import type { UploadPdfOptions } from "./annotations";
 import { getPref, setPref, clearPref } from "../../utils/prefs";
 import { ensureNetworkGlobals } from "../../utils/globals";
-import { log } from "../../utils/log";
+import { log, errMsg } from "../../utils/log";
 
 export class NotConnectedError extends Error {
   constructor() {
@@ -35,6 +35,8 @@ export async function connect(code: string): Promise<void> {
 
 export function disconnect(): void {
   clearPref("deviceToken");
+  // Folder ids belong to the account
+  for (const k of ["folderPath", "folderId", "folderParent"]) clearPref(k);
   cachedApi = null;
 }
 
@@ -53,7 +55,50 @@ export function resetApi(): void {
   cachedApi = null;
 }
 
-export { ensureFolder, putPages } from "./annotations";
+export { putPages } from "./annotations";
+
+/**
+ * The id of the sync folder (a "/"-separated path), creating missing folders.
+ * Once resolved, its id is kept in the prefs, and later calls only check that
+ * it is still there (the root listing and its metadata) instead of reading
+ * every item.
+ */
+export async function ensureFolder(
+  api: RemarkableApi,
+  path: string,
+): Promise<string> {
+  const name = path
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (!name) return "";
+  const id = getPref("folderId");
+  if (id && getPref("folderPath") === path) {
+    try {
+      const ref = (await api.listRefs(true)).find((r) => r.id === id);
+      const meta = ref && (await api.getMetadata(ref));
+      if (
+        meta &&
+        meta.type === "CollectionType" &&
+        meta.visibleName === name &&
+        (meta.parent ?? "") === getPref("folderParent")
+      ) {
+        return id;
+      }
+      log(`ensureFolder: "${path}" moved or deleted, looking it up again`);
+    } catch (e) {
+      log(`ensureFolder: could not check "${path}": ${errMsg(e)}`);
+    }
+  }
+  const found = await rm.ensureFolder(api, path);
+  const ref = (await api.listRefs()).find((r) => r.id === found);
+  const meta = ref && (await api.getMetadata(ref));
+  setPref("folderPath", path);
+  setPref("folderId", found);
+  setPref("folderParent", meta?.parent ?? "");
+  return found;
+}
 
 /** Upload a PDF into a folder (see `uploadPdf` in annotations.ts). */
 export async function uploadPdf(
