@@ -1,7 +1,7 @@
 {
   "name": "zotero-remarkable-sync",
   "type": "module",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Sync Zotero PDFs and annotations with the reMarkable tablet",
   "config": {
     "addonName": "Zotero reMarkable Sync",
