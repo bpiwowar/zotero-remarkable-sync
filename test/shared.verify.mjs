@@ -171,3 +171,45 @@ assert.equal(await noteWith(edited, null), user);
 assert.equal(await parseNote("<p>remarkable sync is mentioned</p>"), null);
 
 console.log("✓ shared sync: key uuids, keyed authors, state note");
+
+// --- Grouping pen strokes into one ink annotation ---------------------------
+const { groupStrokes } = await import(join(root, ".scaffold/strokes.mjs"));
+const pen = (x, y, style = "pen", author = 1) => ({
+  style,
+  author,
+  path: [x, y, x + 5, y + 2], // a short stroke
+});
+// A word: letters a few points apart, drawn one after the other.
+assert.deepEqual(
+  groupStrokes([pen(100, 100), pen(108, 100), pen(116, 101)], 12),
+  [[0, 1, 2]],
+);
+// Far apart, another pen or colour, another author: separate annotations.
+assert.deepEqual(groupStrokes([pen(100, 100), pen(300, 400)], 12), [[0], [1]]);
+assert.deepEqual(groupStrokes([pen(100, 100), pen(104, 100, "red")], 12), [
+  [0],
+  [1],
+]);
+assert.deepEqual(groupStrokes([pen(100, 100), pen(104, 100, "pen", 2)], 12), [
+  [0],
+  [1],
+]);
+// Close to any stroke of the group (not only the last one): a dot or a cross
+// added over an earlier letter joins.
+assert.deepEqual(
+  groupStrokes([pen(100, 100), pen(140, 100), pen(102, 90)], 12),
+  [[0], [1], [2]],
+  "a group is closed once a stroke starts another one",
+);
+assert.deepEqual(
+  groupStrokes([pen(100, 100), pen(110, 100), pen(102, 90)], 12),
+  [[0, 1, 2]],
+);
+// Something else drawn in between (null) ends the group.
+assert.deepEqual(groupStrokes([pen(100, 100), null, pen(104, 100)], 12), [
+  [0],
+  [2],
+]);
+// Gap 0: grouping off.
+assert.deepEqual(groupStrokes([pen(100, 100), pen(101, 100)], 0), [[0], [1]]);
+console.log("✓ stroke grouping");

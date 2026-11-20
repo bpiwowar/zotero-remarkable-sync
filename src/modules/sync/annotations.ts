@@ -20,6 +20,7 @@ import type { RmHighlight, RmStroke } from "../remarkable/annotations";
 import { rmToZoteroHex } from "../remarkable/colors";
 import { log, errMsg } from "../../utils/log";
 import type { PulledSource } from "./state";
+import { groupStrokes, type GroupableStroke } from "./strokes";
 
 // Zotero object-key charset (excludes 0/1/I/O).
 const KEY_CHARS = "23456789ABCDEFGHIJKLMNPQRSTUVWXYZ";
@@ -82,6 +83,19 @@ function sortIndex(pageIndex: number, yFromTop: number): string {
 
 // --- Content signatures (for dedup against existing annotations) ------------
 
+/**
+ * The extra part of an ink annotation's signature: none for a single path (as
+ * before grouping), else the number of paths and the end of the last one, so
+ * that adding or erasing a stroke of a group changes the signature.
+ */
+function inkExtra(paths: number[][]): string {
+  if (paths.length < 2) return "";
+  const last = paths[paths.length - 1];
+  const x = last[last.length - 2] ?? 0;
+  const y = last[last.length - 1] ?? 0;
+  return `${paths.length}|${Math.round(x)},${Math.round(y)}`;
+}
+
 function sig(
   type: string,
   pageIndex: number,
@@ -120,7 +134,7 @@ export function existingSig(item: Zotero.Item): string | null {
     if (type === "ink") {
       const p = pos.paths?.[0];
       if (!p || p.length < 2) return null;
-      return sig("ink", pos.pageIndex, p[0], p[1]);
+      return sig("ink", pos.pageIndex, p[0], p[1], inkExtra(pos.paths!));
     }
     if (type === "note") {
       const names = pageTagNames(item.annotationComment);
@@ -459,30 +473,91 @@ function buildShape(
   };
 }
 
-function buildInk(
-  pageIndex: number,
-  stroke: RmStroke,
-  size: PdfPageSize,
-): Pending | null {
+/** A pen stroke and its path in PDF points. */
+interface PenStroke extends GroupableStroke {
+  stroke: RmStroke;
+}
+
+/** A pen stroke ready for grouping, or null if it has no drawable path. */
+function penStroke(stroke: RmStroke, size: PdfPageSize): PenStroke | null {
   const path = strokeToPath(stroke.points, size);
   if (path.length < 4) return null;
-  let topY = 0;
-  for (let i = 1; i < path.length; i += 2) topY = Math.max(topY, path[i]);
   return {
-    signature: sig("ink", pageIndex, path[0], path[1]),
+    stroke,
+    path,
+    style: [
+      stroke.tool,
+      stroke.thickness,
+      stroke.colorIndex,
+      stroke.rgba?.join(",") ?? "",
+    ].join("|"),
+    author: stroke.ids?.[0]?.part1,
+  };
+}
+
+/** One ink annotation from pen strokes (one path each; same pen and colour). */
+function buildInk(
+  pageIndex: number,
+  pens: PenStroke[],
+  size: PdfPageSize,
+): Pending {
+  const paths = pens.map((p) => p.path);
+  const first = pens[0].stroke;
+  let topY = 0;
+  for (const path of paths) {
+    for (let i = 1; i < path.length; i += 2) topY = Math.max(topY, path[i]);
+  }
+  return {
+    signature: sig("ink", pageIndex, paths[0][0], paths[0][1], inkExtra(paths)),
     json: {
       type: "ink",
-      color: colorToHex(stroke.colorIndex, stroke.rgba),
+      color: colorToHex(first.colorIndex, first.rgba),
       pageLabel: String(pageIndex + 1),
       sortIndex: sortIndex(pageIndex, (size.y0 ?? 0) + size.height - topY),
       position: {
         pageIndex,
-        paths: [path],
-        width: inkWidth(stroke.pointWidth),
+        paths,
+        width: inkWidth(first.pointWidth),
       },
       comment: "",
     },
   };
+}
+
+/**
+ * The annotations of a page's strokes: highlighter strokes, rectangles, and
+ * pen ink — nearby pen strokes drawn one after the other grouped into one ink
+ * annotation when `groupGap` > 0 (see ./strokes).
+ */
+function buildStrokes(
+  pageIndex: number,
+  strokes: RmStroke[],
+  size: PdfPageSize,
+  groupGap: number,
+): { pending: Pending | null; ids?: RmStroke["ids"] }[] {
+  const out: { pending: Pending | null; ids?: RmStroke["ids"] }[] = [];
+  // Pen strokes in drawing order; null for any other stroke (ends a group).
+  const pens: (PenStroke | null)[] = [];
+  for (const st of strokes) {
+    const other = st.isHighlighter
+      ? buildHighlighterStroke(pageIndex, st, size)
+      : buildShape(pageIndex, st, size);
+    if (other || st.isHighlighter) {
+      out.push({ pending: other, ids: st.ids });
+      pens.push(null);
+      continue;
+    }
+    const pen = penStroke(st, size);
+    if (pen) pens.push(pen); // a stroke without a path is dropped
+  }
+  for (const group of groupStrokes(pens, groupGap)) {
+    const members = group.map((i) => pens[i]!);
+    out.push({
+      pending: buildInk(pageIndex, members, size),
+      ids: members.flatMap((m) => m.stroke.ids ?? []),
+    });
+  }
+  return out;
 }
 
 /**
@@ -524,6 +599,10 @@ export async function applyAnnotations(
   ourKeys: string[] = [],
   deletedSigs: string[] = [],
   pageTags: RmPageTags[] = [],
+  opts: {
+    /** group nearby pen strokes within this many PDF points (0: never) */
+    groupGap?: number;
+  } = {},
 ): Promise<ApplyResult> {
   const suppressed = new Set(deletedSigs);
   // Build the device's current set: pendings to create + their signatures.
@@ -548,14 +627,8 @@ export async function applyAnnotations(
       ...mergeHighlights(page.highlights).map((hl) =>
         withSource(buildHighlight(pdfPageIndex, hl, size), hl.ids),
       ),
-      ...page.strokes.map((st) =>
-        withSource(
-          st.isHighlighter
-            ? buildHighlighterStroke(pdfPageIndex, st, size)
-            : (buildShape(pdfPageIndex, st, size) ??
-                buildInk(pdfPageIndex, st, size)),
-          st.ids,
-        ),
+      ...buildStrokes(pdfPageIndex, page.strokes, size, opts.groupGap ?? 0).map(
+        ({ pending, ids }) => withSource(pending, ids),
       ),
     ];
     for (const p of built) {

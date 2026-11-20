@@ -17,6 +17,8 @@ declare namespace _ZoteroTypes {
       "syncInterval": number;
       "deleteOnUnsync": boolean;
       "safeMode": boolean;
+      "groupStrokes": boolean;
+      "groupStrokesGap": number;
     };
   }
 }

@@ -55,6 +55,8 @@ export type FluentMessageId =
   | 'pref-schedule-title'
   | 'pref-sync-delete-on-unsync'
   | 'pref-sync-folder'
+  | 'pref-sync-group-strokes'
+  | 'pref-sync-group-strokes-help'
   | 'pref-sync-safe-mode'
   | 'pref-sync-safe-mode-help'
   | 'pref-sync-tag'

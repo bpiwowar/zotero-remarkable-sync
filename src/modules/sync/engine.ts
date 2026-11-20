@@ -138,6 +138,13 @@ export function isSafeMode(): boolean {
   return getPref("safeMode") !== false;
 }
 
+/** The distance (PDF points) for grouping pen strokes, 0 when not grouping. */
+function strokeGroupGap(): number {
+  if (getPref("groupStrokes") === false) return 0;
+  const gap = Number(getPref("groupStrokesGap"));
+  return Number.isFinite(gap) && gap >= 0 ? gap : 12;
+}
+
 /** Remove the sync tag from an item, if it has it. */
 async function untag(item: Zotero.Item): Promise<void> {
   const tag = getSyncTag();
@@ -675,6 +682,7 @@ export async function pullAll(
         rec.annotationKeys ?? [],
         deletedSigs,
         pageTags,
+        { groupGap: strokeGroupGap() },
       );
 
       const updated: SyncRecord = {

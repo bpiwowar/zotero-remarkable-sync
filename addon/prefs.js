@@ -20,3 +20,8 @@ pref("deleteOnUnsync", true);
 // Safe mode: never modify annotations on the reMarkable (pull only). PDFs are
 // still uploaded ("storing" is non-destructive). On by default.
 pref("safeMode", true);
+// Group nearby pen strokes, drawn one after the other, into one Zotero ink
+// annotation (handwriting reads as one annotation instead of one per stroke).
+pref("groupStrokes", true);
+// How close (PDF points) a stroke must be to a stroke of the group to join it.
+pref("groupStrokesGap", 12);
