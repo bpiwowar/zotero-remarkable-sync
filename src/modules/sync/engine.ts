@@ -523,6 +523,29 @@ function erasedOnDevice(
 }
 
 /**
+ * Move a Zotero annotation whose items were erased on the device to the Zotero
+ * trash. Returns false if it is already gone or could not be trashed.
+ */
+export async function trashErasedAnnotation(
+  libraryID: number,
+  key: string,
+): Promise<boolean> {
+  const item = Zotero.Items.getByLibraryAndKey(libraryID, key) as
+    | Zotero.Item
+    | false;
+  if (!item || item.deleted) return false;
+  try {
+    item.deleted = true;
+    await item.saveTx({ skipSelect: true });
+    log(`sync: annotation ${key} erased on the device, moved to trash`);
+    return true;
+  } catch (e) {
+    log(`sync: could not trash annotation ${key}: ${errMsg(e)}`);
+    return false;
+  }
+}
+
+/**
  * Move to the Zotero trash the annotations whose pushed items were erased on
  * the device (not in safe mode, and only when the device changed the document
  * since our last write). Returns the record without them, and how many were
@@ -540,18 +563,7 @@ async function trashErased(
   if (!erased.length) return { rec, trashed: 0 };
   let trashed = 0;
   for (const t of erased) {
-    const item = Zotero.Items.getByLibraryAndKey(libraryID, t.key) as
-      | Zotero.Item
-      | false;
-    if (!item || item.deleted) continue;
-    try {
-      item.deleted = true;
-      await item.saveTx({ skipSelect: true });
-      trashed++;
-      log(`pullAll: annotation ${t.key} erased on the device, moved to trash`);
-    } catch (e) {
-      log(`pullAll: could not trash annotation ${t.key}: ${errMsg(e)}`);
-    }
+    if (await trashErasedAnnotation(libraryID, t.key)) trashed++;
   }
   const gone = new Set(erased.map((t) => t.key));
   const pushedItems = (rec.pushedItems ?? []).filter((t) => !gone.has(t.key));

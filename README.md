@@ -339,8 +339,9 @@ tablet and is skipped.
   annotation stops being tracked.
 - **Zotero annotations erased on the tablet:** when every item pushed for a
   Zotero annotation is gone from its page (and the page is still there), the
-  next pull moves the annotation to the Zotero trash and stops tracking it
-  (not in safe mode). The check is skipped when the document is still the
+  next sync moves the annotation to the Zotero trash and stops tracking it
+  (not in safe mode): the push does it for a page it rewrites (before writing
+  the page, so the annotation is not written back), the pull for the others. The check is skipped when the document is still the
   version our last push wrote (`rec.pushedVersion`). Restoring the annotation
   from the trash pushes it again.
 - **Placeholder guard:** if the device lists fewer pages than the PDF has, it

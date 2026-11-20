@@ -45,6 +45,7 @@ import { keyToUuid, keyedAuthors, MAX_AUTHOR } from "../remarkable/zkey";
 import {
   isSafeMode as engineIsSafeMode,
   isInTrash,
+  trashErasedAnnotation,
   pdfPageCount,
   type ProgressFn,
 } from "./engine";
@@ -54,6 +55,8 @@ const PUSHABLE = new Set(["highlight", "underline", "ink"]);
 
 export interface PushSummary {
   pushed: number;
+  /** Zotero annotations erased on the device, moved to the Zotero trash */
+  trashed: number;
   skipped: number;
   failed: number;
   errors: string[];
@@ -286,7 +289,13 @@ export async function pushAnnotations(
   opts: { onlyKeys?: Set<string>; force?: boolean } = {},
 ): Promise<PushSummary> {
   ensureNetworkGlobals();
-  const summary: PushSummary = { pushed: 0, skipped: 0, failed: 0, errors: [] };
+  const summary: PushSummary = {
+    pushed: 0,
+    trashed: 0,
+    skipped: 0,
+    failed: 0,
+    errors: [],
+  };
 
   // Safe mode never rewrites `.rm` pages on the device. This is the single guard
   // that guarantees no annotation push can happen while it is on.
@@ -492,7 +501,7 @@ export async function pushAnnotations(
           }
         }
 
-        const owners = [...hlOwners, ...stOwners];
+        let owners = [...hlOwners, ...stOwners];
         let bytes: Uint8Array;
         let ids: CrdtId[];
         let keyed: Set<string>;
@@ -500,6 +509,41 @@ export async function pushAnnotations(
           const existing = await api.raw.getHash(found.ref.rmEntry);
           const parsed = parseRmPage(existing);
           if (!parsed.layerId) continue;
+          // Annotations erased on the device since our last write (all their
+          // items gone from this page): trash them in Zotero rather than
+          // writing them again.
+          if (ref.hash !== rec.pushedVersion) {
+            const present = new Set(
+              [...parsed.strokes, ...parsed.highlights].flatMap((it) =>
+                (it.ids ?? []).map((i) => `${i.part1},${i.part2}`),
+              ),
+            );
+            const erased = new Set(
+              tracked
+                .filter(
+                  (t) =>
+                    t.page === pageUuid &&
+                    t.ids.length > 0 &&
+                    t.ids.every(([a, c]) => !present.has(`${a},${c}`)),
+                )
+                .map((t) => t.key),
+            );
+            for (const k of erased) {
+              if (await trashErasedAnnotation(libraryID, k)) summary.trashed++;
+            }
+            if (erased.size) {
+              const keep = <T>(items: T[], by: string[]) =>
+                items.filter((_, i) => !erased.has(by[i]));
+              const hl = keep(highlights, hlOwners);
+              const st = keep(strokes, stOwners);
+              highlights.splice(0, highlights.length, ...hl);
+              strokes.splice(0, strokes.length, ...st);
+              owners = [
+                ...hlOwners.filter((k) => !erased.has(k)),
+                ...stOwners.filter((k) => !erased.has(k)),
+              ];
+            }
+          }
           // Besides what this computer wrote, drop the items any computer wrote
           // for these annotations (under their own author).
           const rewrite = new Set([...managedKeys, ...here.keys]);
