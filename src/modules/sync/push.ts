@@ -633,6 +633,7 @@ export async function pushAnnotations(
           annotationSources: drop(rec.annotationSources),
           pushedItems: newTracked,
           pushedKeys: newTracked.map((p) => p.key),
+          pushedVersion: ref.hash,
         });
         summary.pushed += writtenItems;
       }

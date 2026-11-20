@@ -337,6 +337,12 @@ tablet and is skipped.
   ids). When such an annotation is deleted in Zotero, its items are removed
   from that page ([`deletedPulled`](src/modules/sync/push.ts#L183)), and the
   annotation stops being tracked.
+- **Zotero annotations erased on the tablet:** when every item pushed for a
+  Zotero annotation is gone from its page (and the page is still there), the
+  next pull moves the annotation to the Zotero trash and stops tracking it
+  (not in safe mode). The check is skipped when the document is still the
+  version our last push wrote (`rec.pushedVersion`). Restoring the annotation
+  from the trash pushes it again.
 - **Placeholder guard:** if the device lists fewer pages than the PDF has, it
   still holds the placeholder page list. The document is skipped with the log
   line "open it once on the reMarkable"

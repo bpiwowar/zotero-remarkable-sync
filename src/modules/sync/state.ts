@@ -26,6 +26,9 @@ export interface SyncRecord {
   libraryID?: number;
   /** epoch ms of last successful push */
   lastPushed: number;
+  /** reMarkable doc hash after our last page write: a pull reading that
+   *  version knows the device has not changed anything since */
+  pushedVersion?: string;
   /** reMarkable doc hash last pulled (skip pull when unchanged) */
   lastPulledVersion?: string;
   /** keys of annotations created on the last pull (for idempotent re-pull) */

@@ -5,7 +5,7 @@ import { getPref } from "../../utils/prefs";
 import { ensureNetworkGlobals } from "../../utils/globals";
 import { log, errMsg } from "../../utils/log";
 import * as client from "../remarkable/client";
-import { fetchAnnotations } from "../remarkable/annotations";
+import { fetchAnnotations, pdfIndexByPageId } from "../remarkable/annotations";
 import { readPdfPageSizes, pageSizeAt } from "../remarkable/annotations";
 import {
   getRecord,
@@ -15,6 +15,7 @@ import {
   allRecords,
   refreshShared,
   markSynced,
+  type PushedItem,
   type SyncRecord,
 } from "./state";
 import type { RemarkableApi } from "../remarkable/cloud";
@@ -495,6 +496,75 @@ function withoutZoteroItems(pages: RmDocPage[]): RmDocPage[] {
   });
 }
 
+/**
+ * Zotero annotations pushed to the device whose items were all erased there:
+ * their page is still in the document, but none of their item ids is. `pages`
+ * are the device pages as fetched (Zotero items included).
+ */
+function erasedOnDevice(
+  rec: SyncRecord,
+  pages: RmDocPage[],
+  pageIds: Set<string>,
+): PushedItem[] {
+  const present = new Set<string>();
+  for (const { pageUuid, page } of pages) {
+    for (const it of [...page.strokes, ...page.highlights]) {
+      for (const id of it.ids ?? []) {
+        present.add(`${pageUuid}:${id.part1},${id.part2}`);
+      }
+    }
+  }
+  return (rec.pushedItems ?? []).filter(
+    (t) =>
+      pageIds.has(t.page) &&
+      t.ids.length > 0 &&
+      t.ids.every(([a, c]) => !present.has(`${t.page}:${a},${c}`)),
+  );
+}
+
+/**
+ * Move to the Zotero trash the annotations whose pushed items were erased on
+ * the device (not in safe mode, and only when the device changed the document
+ * since our last write). Returns the record without them, and how many were
+ * trashed. A trashed annotation restored by the user is pushed again.
+ */
+async function trashErased(
+  rec: SyncRecord,
+  hash: string,
+  pages: RmDocPage[],
+  pageIds: Set<string>,
+  libraryID: number,
+): Promise<{ rec: SyncRecord; trashed: number }> {
+  if (isSafeMode() || hash === rec.pushedVersion) return { rec, trashed: 0 };
+  const erased = erasedOnDevice(rec, pages, pageIds);
+  if (!erased.length) return { rec, trashed: 0 };
+  let trashed = 0;
+  for (const t of erased) {
+    const item = Zotero.Items.getByLibraryAndKey(libraryID, t.key) as
+      | Zotero.Item
+      | false;
+    if (!item || item.deleted) continue;
+    try {
+      item.deleted = true;
+      await item.saveTx({ skipSelect: true });
+      trashed++;
+      log(`pullAll: annotation ${t.key} erased on the device, moved to trash`);
+    } catch (e) {
+      log(`pullAll: could not trash annotation ${t.key}: ${errMsg(e)}`);
+    }
+  }
+  const gone = new Set(erased.map((t) => t.key));
+  const pushedItems = (rec.pushedItems ?? []).filter((t) => !gone.has(t.key));
+  return {
+    rec: {
+      ...rec,
+      pushedItems,
+      pushedKeys: pushedItems.map((t) => t.key),
+    },
+    trashed,
+  };
+}
+
 /** Content signatures of the given annotations, by key. */
 function sigsOf(keys: string[], libraryID: number): Record<string, string> {
   const out: Record<string, string> = {};
@@ -565,10 +635,18 @@ export async function pullAll(
 
       progress?.(`Pulling annotations: ${rec.visibleName}`, pct);
       log(`pullAll: fetching "${rec.visibleName}" (${rec.docId})`);
-      const { pages, pageTags } = await fetchAnnotations(
+      const { pages, pageTags, content } = await fetchAnnotations(
         api,
         rec.docId,
         entry.hash,
+      );
+      // Zotero annotations erased on the device go to the Zotero trash.
+      const erased = await trashErased(
+        rec,
+        entry.hash,
+        pages,
+        new Set(pdfIndexByPageId(content).keys()),
+        libraryID,
       );
 
       const path = await (att as Zotero.Item).getFilePathAsync();
@@ -588,7 +666,7 @@ export async function pullAll(
       );
 
       const updated: SyncRecord = {
-        ...rec,
+        ...erased.rec,
         lastPulledVersion: entry.hash,
         adopted: undefined,
         annotationKeys: result.keys,
@@ -603,7 +681,7 @@ export async function pullAll(
       summary.updated++;
       ok.push(attKey);
       summary.annotations += result.added;
-      summary.removed += result.removed;
+      summary.removed += result.removed + erased.trashed;
       log(
         `pullAll: "${rec.visibleName}" -> +${result.added} -${result.removed} ~${result.updated} annotation(s)`,
       );
