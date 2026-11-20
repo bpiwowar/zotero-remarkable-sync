@@ -10,7 +10,7 @@ export function log(...args: unknown[]): void {
     const text = args
       .map((a) =>
         a instanceof Error
-          ? `${a.name}: ${a.message}`
+          ? `${a.name}: ${a.message}${a.stack ? `\n${a.stack}` : ""}`
           : typeof a === "string"
             ? a
             : safeStringify(a),

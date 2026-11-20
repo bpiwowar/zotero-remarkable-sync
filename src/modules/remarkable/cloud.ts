@@ -8,6 +8,7 @@
 
 import type { DocumentContent, Entry, ItemRef, RawEntry } from "rmapi-js";
 import * as wasm from "remarkable-annotations";
+import { log } from "../../utils/log";
 
 // --- Errors --------------------------------------------------------------
 
@@ -138,12 +139,31 @@ export async function run(op: wasm.CloudOperation): Promise<Done> {
         step = op.resume(await perform(step)) as Step;
       } else if (step.type === "done") {
         return step;
-      } else {
+      } else if (step.type === "error" && step.error) {
         throw cloudError(step.error);
+      } else {
+        // Not a step of the library's protocol: report what came back.
+        const seen = describe(step);
+        log("cloud: unexpected step from the library:", seen);
+        throw new CloudError({
+          kind: "unexpected",
+          message: `unexpected step from the cloud client: ${seen}`,
+        });
       }
     }
   } finally {
     op.free();
+  }
+}
+
+/** A short description of a value, for error messages. */
+function describe(value: unknown): string {
+  try {
+    const keys =
+      value && typeof value === "object" ? Object.keys(value).join(",") : "";
+    return `${Object.prototype.toString.call(value)} {${keys}} ${JSON.stringify(value)?.slice(0, 300)}`;
+  } catch (e) {
+    return `${String(value)} (${String(e)})`;
   }
 }
 
