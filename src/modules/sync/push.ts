@@ -43,7 +43,6 @@ import {
 import { existingSig, pushFingerprint } from "./annotations";
 import { keyToUuid, keyedAuthors, MAX_AUTHOR } from "../remarkable/zkey";
 import {
-  isSafeMode as engineIsSafeMode,
   isInTrash,
   trashErasedAnnotation,
   pdfPageCount,
@@ -296,13 +295,6 @@ export async function pushAnnotations(
     failed: 0,
     errors: [],
   };
-
-  // Safe mode never rewrites `.rm` pages on the device. This is the single guard
-  // that guarantees no annotation push can happen while it is on.
-  if (engineIsSafeMode()) {
-    log("pushAnnotations: skipped (safe mode on)");
-    return summary;
-  }
 
   const records = await allRecords();
   const keys = Object.keys(records).filter(

@@ -13,7 +13,7 @@ import { preload as preloadState } from "./modules/sync/state";
 import { loadAnnotations } from "./modules/remarkable/wasm";
 
 // Build marker — bump when shipping a build you want to confirm is loaded.
-const BUILD = "v0.2.0-safe-mode";
+const BUILD = "v0.7.0";
 
 let notifierID: string | null = null;
 

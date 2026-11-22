@@ -130,14 +130,6 @@ export async function endRun(): Promise<void> {
   await syncZotero();
 }
 
-/**
- * Safe mode (default on): never modify annotations on the device — pull only.
- * PDFs are still uploaded, since storing a document is non-destructive.
- */
-export function isSafeMode(): boolean {
-  return getPref("safeMode") !== false;
-}
-
 /** The distance (PDF points) for grouping pen strokes, 0 when not grouping. */
 function strokeGroupGap(): number {
   if (getPref("groupStrokes") === false) return 0;
@@ -554,7 +546,7 @@ export async function trashErasedAnnotation(
 
 /**
  * Move to the Zotero trash the annotations whose pushed items were erased on
- * the device (not in safe mode, and only when the device changed the document
+ * the device (only when the device changed the document
  * since our last write). Returns the record without them, and how many were
  * trashed. A trashed annotation restored by the user is pushed again.
  */
@@ -565,7 +557,7 @@ async function trashErased(
   pageIds: Set<string>,
   libraryID: number,
 ): Promise<{ rec: SyncRecord; trashed: number }> {
-  if (isSafeMode() || hash === rec.pushedVersion) return { rec, trashed: 0 };
+  if (hash === rec.pushedVersion) return { rec, trashed: 0 };
   const erased = erasedOnDevice(rec, pages, pageIds);
   if (!erased.length) return { rec, trashed: 0 };
   let trashed = 0;

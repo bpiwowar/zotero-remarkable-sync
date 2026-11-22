@@ -178,7 +178,7 @@ export async function runForcePull(): Promise<void> {
 
 /** Push Zotero-origin annotations to the reMarkable device. */
 export async function runPush(): Promise<void> {
-  if (notConnected() || blockedBySafeMode()) return;
+  if (notConnected()) return;
   const pw = new ztoolkit.ProgressWindow(config.addonName, {
     closeOnClick: true,
     closeTime: -1,
@@ -243,15 +243,6 @@ function notConnected(): boolean {
   return true;
 }
 
-/** Block device-mutating annotation pushes while safe mode is on (with notice). */
-function blockedBySafeMode(): boolean {
-  if (!engine.isSafeMode()) return false;
-  new ztoolkit.ProgressWindow(config.addonName)
-    .createLine({ text: getString("safe-mode-blocked"), type: "fail" })
-    .show(5000);
-  return true;
-}
-
 function newProgress() {
   return new ztoolkit.ProgressWindow(config.addonName, {
     closeOnClick: true,
@@ -265,7 +256,7 @@ function newProgress() {
 export async function runOverwriteFromZotero(
   items: Zotero.Item[],
 ): Promise<void> {
-  if (notConnected() || blockedBySafeMode()) return;
+  if (notConnected()) return;
   const atts = engine.syncedPdfsOf(items);
   if (atts.length === 0) {
     new ztoolkit.ProgressWindow(config.addonName)
@@ -343,7 +334,7 @@ export async function runOverwriteFromRemarkable(
  * re-uploaded, so the tablet's own annotations stay.
  */
 export async function runForcePush(items: Zotero.Item[]): Promise<void> {
-  if (notConnected() || blockedBySafeMode()) return;
+  if (notConnected()) return;
   const atts = engine.syncedPdfsOf(items);
   if (atts.length === 0) {
     new ztoolkit.ProgressWindow(config.addonName)
