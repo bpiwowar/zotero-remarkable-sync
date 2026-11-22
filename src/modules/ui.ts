@@ -12,7 +12,7 @@ import * as engine from "./sync/engine";
 import { pushAnnotations } from "./sync/push";
 import * as client from "./remarkable/client";
 import * as cleanup from "./sync/cleanup";
-import { lastSyncedCached } from "./sync/state";
+import { lastSyncedCached, onStateChange } from "./sync/state";
 import { pdfState, pdfsOf, statusIcon, STATES, type SyncState } from "./status";
 
 // 96px icon (manifest/install). For in-app UI we use a small 32px variant so
@@ -768,9 +768,49 @@ export function unregisterAllWindows(): void {
 // Item-pane status section
 // ---------------------------------------------------------------------------
 
+// Rendered sections (body → what it shows), re-rendered when the sync state
+// changes: Zotero only re-renders a section when its item changes or is
+// re-selected, and a sync run changes our state, not the item.
+const liveSections = new Map<
+  HTMLDivElement,
+  { item: Zotero.Item; doc: Document }
+>();
+let unsubscribeState: (() => void) | null = null;
+let rerenderTimer: { win: Window; id: number } | null = null;
+
+function rerenderLiveSections(): void {
+  // Iterate over a snapshot: renderSection deletes and re-adds its body, and a
+  // Map iterator visits re-added keys again (an endless loop otherwise).
+  for (const [body, { item, doc }] of [...liveSections]) {
+    if (!body.isConnected) {
+      liveSections.delete(body);
+      continue;
+    }
+    try {
+      renderSection(body, item, doc);
+    } catch (e) {
+      log("item pane: re-render error:", e);
+    }
+  }
+}
+
+/** Coalesce the many state changes of a sync run into one repaint. */
+function scheduleRerender(): void {
+  if (rerenderTimer) return;
+  const win = Zotero.getMainWindow() as unknown as Window | null;
+  if (!win) return;
+  const id = win.setTimeout(() => {
+    rerenderTimer = null;
+    rerenderLiveSections();
+    refreshStatusDots();
+  }, 200);
+  rerenderTimer = { win, id };
+}
+
 export function registerSection(): void {
   // Idempotent: a previous (hot-reloaded) instance may have left it registered.
   unregisterSection();
+  unsubscribeState = onStateChange(scheduleRerender);
   Zotero.ItemPaneManager.registerSection({
     paneID: SECTION_ID,
     pluginID: config.addonID,
@@ -787,6 +827,17 @@ export function registerSection(): void {
 }
 
 export function unregisterSection(): void {
+  unsubscribeState?.();
+  unsubscribeState = null;
+  if (rerenderTimer) {
+    try {
+      rerenderTimer.win.clearTimeout(rerenderTimer.id);
+    } catch {
+      /* window gone */
+    }
+  }
+  rerenderTimer = null;
+  liveSections.clear();
   try {
     Zotero.ItemPaneManager.unregisterSection(SECTION_ID);
   } catch {
@@ -800,7 +851,9 @@ function renderSection(
   doc: Document,
 ): void {
   body.replaceChildren();
+  liveSections.delete(body);
   if (!item?.isRegularItem() && !item?.isPDFAttachment()) return;
+  liveSections.set(body, { item, doc });
   const el = <K extends keyof HTMLElementTagNameMap>(
     tag: K,
     style: Partial<CSSStyleDeclaration> = {},

@@ -460,6 +460,27 @@ async function persist(): Promise<void> {
   const file: CacheFile = { version: 2, records: cache ?? {}, synced };
   await IO.IOUtils.makeDirectory(stateDir(), { ignoreExisting: true });
   await IO.IOUtils.writeUTF8(stateFile(), JSON.stringify(file, null, 2));
+  notifyChange();
+}
+
+// --- Change listeners ------------------------------------------------------------
+
+const listeners = new Set<() => void>();
+
+/** Be called whenever the sync state changes; returns an unsubscribe function. */
+export function onStateChange(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function notifyChange(): void {
+  for (const l of listeners) {
+    try {
+      l();
+    } catch (e) {
+      log("state: change listener error:", e);
+    }
+  }
 }
 
 async function load(): Promise<StateMap> {
