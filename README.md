@@ -24,7 +24,6 @@ PDFs **and annotations** in sync with a [reMarkable](https://remarkable.com/) ta
   library, compiled to WebAssembly and shipped in the plugin; no external binary
   required.
 
-> Status: early development. See [`MILESTONES`](#milestones) below.
 
 ## How it works
 
@@ -476,15 +475,6 @@ state of each synced paper (over its PDFs) and of each synced PDF row:
   not sent to the tablet, and document-level tags are not synced.
 - **Commas in tag names aren't supported.** The note's comment is
   comma-separated, so such a tag is read back as two.
-
-## Milestones
-
-- **M0** — scaffold, tooling, pre-commit ✅
-- **M1** — push tagged PDFs, auth, preferences, context-menu UX ✅
-- **M2** — pull annotations back as native Zotero annotations ✅
-- **M3** — scheduled auto-sync ✅ · further polish ongoing
-- **M4** — Zotero → reMarkable annotation push (write `.rm` v6), bidirectional
-  deletion, per-item overwrite, status indicator ✅
 
 ## Credits
 
