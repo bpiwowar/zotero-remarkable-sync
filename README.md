@@ -87,6 +87,14 @@ RM_DEVICE_TOKEN=... RM_SOURCE="<title prefix>" npm run devtest
                    # live round trip on the cloud; writes only in "zotrem-dev"
 ```
 
+### Installing the built plugin
+
+`npm run build` writes the installable file to
+`.scaffold/build/zotero-re-markable-sync.xpi`. To install it in Zotero:
+**Tools → Plugins →** (gear menu) **→ Install Plugin From File…** and pick that
+file — Zotero accepts unsigned plugins, so a local build installs as-is.
+Installing a newer build over an existing one upgrades it in place.
+
 ### Connecting to reMarkable
 
 In the plugin preferences, paste a one-time code from
