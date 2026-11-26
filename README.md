@@ -24,8 +24,6 @@ PDFs **and annotations** in sync with a [reMarkable](https://remarkable.com/) ta
   library, compiled to WebAssembly and shipped in the plugin; no external binary
   required.
 
-> Status: early development. See [`MILESTONES`](#milestones) below.
-
 ## How it works
 
 ```
@@ -39,16 +37,13 @@ result back as native Zotero highlight/ink annotations.
 
 ## Development
 
+### First checkout
+
 ```bash
-npm install        # also installs the husky pre-commit hook
-npm start          # launch Zotero with hot-reload
-npm run build      # build the .xpi and type-check
-npm test           # run unit tests (in Zotero)
-npm run lint:fix   # format + lint
-npm run test:shared && npm run test:polyfills
-                   # offline checks: sync note and keyed pages, polyfills
-RM_DEVICE_TOKEN=... RM_SOURCE="<title prefix>" npm run devtest
-                   # live round trip on the cloud; writes only in "zotrem-dev"
+git submodule update --init   # the Rust library below (a plain clone skips it)
+npm run build:wasm            # build its npm package (needs Rust and wasm-pack)
+npm install                   # installs that package; also the husky pre-commit hook
+cp .env.example .env          # then edit: Zotero binary and profile paths
 ```
 
 The reMarkable side (reading and writing `.rm` pages, shapes, mapping coordinates
@@ -56,11 +51,49 @@ to the PDF, PDF page sizes) is the
 [remarkable-annotations](https://github.com/bpiwowar/remarkable-annotations) library
 (Rust, compiled to WebAssembly), a git submodule in
 [`libs/remarkable-annotations`](libs/remarkable-annotations). Its npm package is
-built from the submodule (`npm run build:wasm`, needs Rust and wasm-pack) before
-`npm install`. [`src/modules/remarkable/annotations.ts`](src/modules/remarkable/annotations.ts)
+installed from `libs/remarkable-annotations/wasm/pkg`, which `npm run build:wasm`
+creates — hence the order above: `npm install` fails until the package is built.
+Building it needs a [Rust toolchain](https://rustup.rs/) and
+[wasm-pack](https://github.com/wasm-bindgen/wasm-pack); the
+`wasm32-unknown-unknown` target is installed automatically.
+
+npm caches `file:` dependencies by version, so `npm install` alone does **not**
+pick up a rebuilt package (same version, new content). After re-running
+`npm run build:wasm` (e.g. after a submodule update), force a refresh:
+
+```bash
+rm -rf node_modules/remarkable-annotations && npm install
+```
+
+[`src/modules/remarkable/annotations.ts`](src/modules/remarkable/annotations.ts)
 wraps it for the sync code, and [`cloud.ts`](src/modules/remarkable/cloud.ts)
 makes the requests its cloud client asks for.
 The plugin keeps the Zotero side: credentials, the sync engine and the UI.
+
+`npm start` and `npm test` launch a real Zotero: `.env` must set
+`ZOTERO_PLUGIN_ZOTERO_BIN_PATH` and `ZOTERO_PLUGIN_PROFILE_PATH`
+(see `.env.example`; create a profile first with `zotero -p`).
+
+### Everyday commands
+
+```bash
+npm start          # launch Zotero with hot-reload
+npm run build      # build the .xpi and type-check
+npm test           # run unit tests (in Zotero)
+npm run lint:fix   # format + lint (`lint:check` is what CI enforces)
+npm run test:shared && npm run test:polyfills
+                   # offline checks: sync note and keyed pages, polyfills
+RM_DEVICE_TOKEN=... RM_SOURCE="<title prefix>" npm run devtest
+                   # live round trip on the cloud; writes only in "zotrem-dev"
+```
+
+### Installing the built plugin
+
+`npm run build` writes the installable file to
+`.scaffold/build/zotero-re-markable-sync.xpi`. To install it in Zotero:
+**Tools → Plugins →** (gear menu) **→ Install Plugin From File…** and pick that
+file — Zotero accepts unsigned plugins, so a local build installs as-is.
+Installing a newer build over an existing one upgrades it in place.
 
 ### Connecting to reMarkable
 
@@ -476,15 +509,6 @@ state of each synced paper (over its PDFs) and of each synced PDF row:
   not sent to the tablet, and document-level tags are not synced.
 - **Commas in tag names aren't supported.** The note's comment is
   comma-separated, so such a tag is read back as two.
-
-## Milestones
-
-- **M0** — scaffold, tooling, pre-commit ✅
-- **M1** — push tagged PDFs, auth, preferences, context-menu UX ✅
-- **M2** — pull annotations back as native Zotero annotations ✅
-- **M3** — scheduled auto-sync ✅ · further polish ongoing
-- **M4** — Zotero → reMarkable annotation push (write `.rm` v6), bidirectional
-  deletion, per-item overwrite, status indicator ✅
 
 ## Credits
 
