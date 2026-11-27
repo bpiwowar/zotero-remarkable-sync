@@ -27,9 +27,11 @@ async function startup({ id, version, resourceURI, rootURI }, reason) {
   const ctx = { rootURI };
   ctx._globalThis = ctx;
 
-  Services.scriptloader.loadSubScript(
+  // Zotero 11 (Firefox 153) refuses jar:file: URIs in loadSubScript() unless
+  // allowUnsafeURL is passed; Firefox 140 ignores the unknown option.
+  Services.scriptloader.loadSubScriptWithOptions(
     `${rootURI}/content/scripts/__addonRef__.js`,
-    ctx,
+    { target: ctx, allowUnsafeURL: true },
   );
   await Zotero.__addonInstance__.hooks.onStartup();
 }

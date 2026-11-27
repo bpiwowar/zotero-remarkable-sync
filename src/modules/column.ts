@@ -8,6 +8,7 @@
 import { stateOf, statusIcon } from "./status";
 import { getString } from "../utils/locale";
 import { log } from "../utils/log";
+import { allItemsViews, libraryViews, liveMainWindow } from "../utils/window";
 
 /** Resolve the ItemTree prototype from a window (require module or instance). */
 function itemTreeProto(win: any): any {
@@ -48,18 +49,23 @@ function patchProto(proto: any): boolean {
   return true;
 }
 
-/** Force the item tree to repaint so the dot appears on already-rendered rows. */
-function repaint(win: any): void {
+/** Force an items tree to repaint so the dot appears on already-rendered rows. */
+function repaintView(itemsView: any): void {
   try {
-    win?.ZoteroPane?.itemsView?.tree?.invalidate?.();
+    itemsView?.tree?.invalidate?.();
   } catch {
     /* ignore */
   }
 }
 
-/** Repaint every open window's item tree (e.g. after annotations change). */
+/** Repaint a window's items trees (one per library tab in Zotero 11). */
+function repaint(win: any): void {
+  for (const view of libraryViews(win)) repaintView(view?.itemsView);
+}
+
+/** Repaint every items tree of every open window (e.g. after annotations change). */
 export function refresh(): void {
-  for (const win of Zotero.getMainWindows()) repaint(win);
+  for (const itemsView of allItemsViews()) repaintView(itemsView);
 }
 
 /**
@@ -68,7 +74,7 @@ export function refresh(): void {
  * the class and to repaint. Retries while the items view is still initialising.
  */
 export function registerColumn(win?: any): void {
-  const target = win ?? Zotero.getMainWindow();
+  const target = win ?? liveMainWindow();
   let tries = 0;
   const attempt = () => {
     try {
@@ -94,7 +100,7 @@ export function registerColumn(win?: any): void {
 
 export function unregisterColumn(): void {
   try {
-    const proto = itemTreeProto(Zotero.getMainWindow());
+    const proto = itemTreeProto(liveMainWindow());
     if (proto?.__rmsOrig) {
       proto._renderCell = proto.__rmsOrig;
       delete proto.__rmsOrig;

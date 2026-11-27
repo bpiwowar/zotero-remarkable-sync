@@ -12,13 +12,14 @@ export async function registerPrefPane() {
   await Zotero.PreferencePanes.register({
     pluginID: config.addonID,
     src: rootURI + "content/preferences.xhtml",
+    scripts: [rootURI + "content/preferences.js"],
     label: config.addonName,
     image: `chrome://${config.addonRef}/content/icons/favicon.png`,
   });
 }
 
 export async function registerPrefsScripts(_window: Window) {
-  // Called when the prefs pane is opened (see preferences.xhtml onload).
+  // Called when the prefs pane is opened (see content/preferences.js).
   if (!addon.data.prefs) {
     addon.data.prefs = { window: _window };
   } else {

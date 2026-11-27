@@ -1,5 +1,5 @@
 // UI surface for the plugin:
-//  - a toolbar button + Tools-menu item for "Sync now",
+//  - a toolbar button per library tab + a Tools submenu (Zotero.MenuManager),
 //  - a native item context-menu for Add / Remove from sync,
 //  - an item-pane status section with toggle + sync buttons,
 //  - the progress-window runner shared by all of them.
@@ -13,6 +13,8 @@ import { pushAnnotations } from "./sync/push";
 import * as client from "./remarkable/client";
 import * as cleanup from "./sync/cleanup";
 import { lastSyncedCached, onStateChange } from "./sync/state";
+import { isWindowAlive, liveMainWindow } from "../utils/window";
+import * as column from "./column";
 import { pdfState, pdfsOf, statusIcon, STATES, type SyncState } from "./status";
 
 // 96px icon (manifest/install). For in-app UI we use a small 32px variant so
@@ -25,7 +27,6 @@ const SECTION_ID = `${config.addonRef}-status`;
 // idempotent across hot-reloads (when our module-level state is reset but the
 // previously injected DOM nodes survive).
 const ELEMENT_IDS = [
-  `${ID}-tb-syncnow`,
   `${ID}-style`,
   `${ID}-tools-menu`,
   `${ID}-tools-syncnow`,
@@ -40,6 +41,9 @@ const ELEMENT_IDS = [
   `${ID}-ovr-remarkable`,
   `${ID}-pane-popup`,
 ];
+// Class of our "Sync now" toolbar buttons. Zotero 11 has one items toolbar per
+// library tab, so there can be several buttons in a window: no shared id.
+const TB_CLASS = `${ID}-tb-syncnow`;
 // Property key under which we stash the popupshowing listener on the item menu
 // element, so a stale one can be removed even after a hot-reload.
 const SHOWING_KEY = `${ID}-onShowing`;
@@ -52,6 +56,10 @@ function clearWindowUI(win: Window): void {
   ELEMENT_IDS.forEach((id) =>
     doc.querySelectorAll(`#${id}`).forEach((el: Element) => el.remove()),
   );
+  // `#…-tb-syncnow`: the id our buttons had before they moved to a class.
+  doc
+    .querySelectorAll(`.${TB_CLASS}, #${TB_CLASS}`)
+    .forEach((el: Element) => el.remove());
   const itemmenu = doc.getElementById("zotero-itemmenu") as any;
   if (itemmenu?.[SHOWING_KEY]) {
     itemmenu.removeEventListener("popupshowing", itemmenu[SHOWING_KEY]);
@@ -606,13 +614,7 @@ export async function runCleanup(win: Window): Promise<void> {
 
 /** Repaint item-tree status dots after a membership change. */
 function refreshStatusDots(): void {
-  for (const win of Zotero.getMainWindows()) {
-    try {
-      (win as any)?.ZoteroPane?.itemsView?.tree?.invalidate?.();
-    } catch {
-      /* ignore */
-    }
-  }
+  column.refresh();
 }
 
 // ---------------------------------------------------------------------------
@@ -632,50 +634,104 @@ function makeMenuitem(
   return item;
 }
 
-function registerToolbarButton(win: Window): void {
+/**
+ * Add the "Sync now" button to every items toolbar of a window that lacks one.
+ * Zotero 11 has a toolbar per library tab (the first keeps the base id, the
+ * others get a suffixed id plus a class of the base id) and builds them when a
+ * tab is first shown or reloaded, so this is idempotent and re-run on tab
+ * events (see `ensureToolbarButtons`).
+ */
+function registerToolbarButtons(win: Window): void {
   const doc = win.document;
-  const toolbar = doc.getElementById("zotero-items-toolbar");
-  if (!toolbar) return;
+  const toolbars = doc.querySelectorAll(
+    ":is(#zotero-items-toolbar, .zotero-items-toolbar)",
+  );
+  if (!toolbars.length) return;
 
-  // Constrain the button icon to 16px so it matches Zotero's own buttons.
-  const style = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "style",
-  ) as HTMLStyleElement;
-  style.id = `${ID}-style`;
-  style.textContent = `#${ID}-tb-syncnow .toolbarbutton-icon { width: 16px; height: 16px; }`;
-  doc.documentElement?.appendChild(style);
+  if (!doc.getElementById(`${ID}-style`)) {
+    // Constrain the button icon to 16px so it matches Zotero's own buttons.
+    const style = doc.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "style",
+    ) as HTMLStyleElement;
+    style.id = `${ID}-style`;
+    style.textContent = `.${TB_CLASS} .toolbarbutton-icon { width: 16px; height: 16px; }`;
+    doc.documentElement?.appendChild(style);
+  }
 
-  const btn = (doc as any).createXULElement("toolbarbutton") as Element;
-  btn.id = `${ID}-tb-syncnow`;
-  btn.setAttribute("class", "zotero-tb-button");
-  btn.setAttribute("tooltiptext", getString("menuitem-sync-now"));
-  btn.setAttribute("image", ICON);
-  btn.addEventListener("command", () => void runSyncNow());
-  toolbar.appendChild(btn);
+  toolbars.forEach((toolbar: Element) => {
+    if (toolbar.querySelector(`.${TB_CLASS}`)) return;
+    const btn = (doc as any).createXULElement("toolbarbutton") as Element;
+    btn.setAttribute("class", `zotero-tb-button ${TB_CLASS}`);
+    btn.setAttribute("tooltiptext", getString("menuitem-sync-now"));
+    btn.setAttribute("image", ICON);
+    btn.addEventListener("command", () => void runSyncNow());
+    toolbar.appendChild(btn);
+  });
 }
 
-function registerToolsMenu(win: Window): void {
-  const doc = win.document;
-  const toolsPopup = doc.getElementById("menu_ToolsPopup");
-  if (!toolsPopup) return;
-  // One "reMarkable" submenu instead of many prefixed items.
-  const menu = (doc as any).createXULElement("menu") as Element;
-  menu.id = `${ID}-tools-menu`;
-  menu.setAttribute("label", getString("tools-menu"));
-  const popup = (doc as any).createXULElement("menupopup") as Element;
-  menu.appendChild(popup);
-  const entries: [string, Parameters<typeof getString>[0], () => void][] = [
-    ["tools-syncnow", "tools-sync-now", () => void runSyncNow()],
-    ["tools-push", "tools-push", () => void runPush()],
-    ["tools-forcepull", "tools-force-pull", () => void runForcePull()],
-    ["tools-clearpulled", "tools-clear-pulled", () => void runClearPulled()],
-    ["tools-cleanup", "tools-cleanup", () => void runCleanup(win)],
-  ];
-  for (const [suffix, label, run] of entries) {
-    popup.appendChild(makeMenuitem(doc, suffix, getString(label), run));
+/** Add missing toolbar buttons in every main window (new/reloaded library tabs). */
+export function ensureToolbarButtons(): void {
+  for (const win of Zotero.getMainWindows()) {
+    try {
+      registerToolbarButtons(win as unknown as Window);
+    } catch (e) {
+      log("toolbar button error:", e);
+    }
   }
-  toolsPopup.appendChild(menu);
+}
+
+const TOOLS_MENU_ID = `${ID}-tools`;
+
+/**
+ * The "reMarkable" submenu of Tools, registered once with Zotero.MenuManager
+ * so that it shows in every main window, including Zotero 11 windows holding
+ * only a reader or note tab (which never get onMainWindowLoad).
+ */
+export function registerToolsMenu(): void {
+  unregisterToolsMenu();
+  const window = (ctx: { menuElem: Element }): Window =>
+    ctx.menuElem.ownerDocument!.defaultView as Window;
+  const entries: [Parameters<typeof getLocaleID>[0], (win: Window) => void][] =
+    [
+      ["tools-sync-now", () => void runSyncNow()],
+      ["tools-push", () => void runPush()],
+      ["tools-force-pull", () => void runForcePull()],
+      ["tools-clear-pulled", () => void runClearPulled()],
+      ["tools-cleanup", (win) => void runCleanup(win)],
+    ];
+  Zotero.MenuManager.registerMenu({
+    menuID: TOOLS_MENU_ID,
+    pluginID: config.addonID,
+    target: "main/menubar/tools",
+    menus: [
+      {
+        menuType: "submenu",
+        l10nID: getLocaleID("tools-menu"),
+        // The labels live in our mainWindow.ftl, which onMainWindowLoad only
+        // inserts into windows that have a library tab.
+        onShowing: (_event, ctx) => {
+          (window(ctx) as any).MozXULElement?.insertFTLIfNeeded(
+            `${config.addonRef}-mainWindow.ftl`,
+          );
+        },
+        menus: entries.map(([l10n, run]) => ({
+          menuType: "menuitem" as const,
+          l10nID: getLocaleID(l10n),
+          onCommand: (_event: Event, ctx: { menuElem: Element }) =>
+            run(window(ctx)),
+        })),
+      },
+    ],
+  });
+}
+
+export function unregisterToolsMenu(): void {
+  try {
+    Zotero.MenuManager.unregisterMenu(TOOLS_MENU_ID);
+  } catch {
+    /* not registered */
+  }
 }
 
 function registerContextMenu(win: Window): void {
@@ -739,8 +795,7 @@ function registerContextMenu(win: Window): void {
 export function registerWindowUI(win: Window): void {
   // Idempotent: drop any leftovers from a previous (hot-reloaded) instance.
   clearWindowUI(win);
-  registerToolbarButton(win);
-  registerToolsMenu(win);
+  registerToolbarButtons(win);
   registerContextMenu(win);
 }
 
@@ -787,8 +842,9 @@ function rerenderLiveSections(): void {
 
 /** Coalesce the many state changes of a sync run into one repaint. */
 function scheduleRerender(): void {
-  if (rerenderTimer) return;
-  const win = Zotero.getMainWindow() as unknown as Window | null;
+  // A pending timer dies with its window (Zotero 11 has several): start over.
+  if (rerenderTimer && isWindowAlive(rerenderTimer.win)) return;
+  const win = liveMainWindow() as Window | undefined;
   if (!win) return;
   const id = win.setTimeout(() => {
     rerenderTimer = null;

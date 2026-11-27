@@ -13,9 +13,10 @@ import { preload as preloadState } from "./modules/sync/state";
 import { loadAnnotations } from "./modules/remarkable/wasm";
 
 // Build marker — bump when shipping a build you want to confirm is loaded.
-const BUILD = "v0.7.0";
+const BUILD = "v0.8.0";
 
 let notifierID: string | null = null;
+let tabNotifierID: string | null = null;
 
 async function onStartup() {
   await Promise.all([
@@ -38,6 +39,7 @@ async function onStartup() {
   // registered once — not per window).
   await registerPrefPane();
   ui.registerSection();
+  ui.registerToolsMenu();
   await preloadState(); // so the status indicator can read sync state synchronously
   scheduler.start();
 
@@ -65,8 +67,30 @@ async function onStartup() {
     /* ignore */
   }
 
+  // Zotero 11 builds an items toolbar per library tab, when the tab is first
+  // shown (or reloaded after being unloaded): add our button to new ones.
+  tabNotifierID = Zotero.Notifier.registerObserver(
+    {
+      // "load" (a tab finished loading) is not in zotero-types' event union.
+      notify: (event: string) => {
+        if (event === "add" || event === "load" || event === "select") {
+          Zotero.Promise.delay(0).then(() => ui.ensureToolbarButtons());
+        }
+      },
+    },
+    ["tab"],
+    `${addon.data.config.addonRef}-tabs`,
+  );
+
+  // Zotero 11: a main window may have no library view (e.g. a reader-only
+  // window); Zotero calls onMainWindowLoad when its first one appears.
   await Promise.all(
-    Zotero.getMainWindows().map((win) => onMainWindowLoad(win)),
+    Zotero.getMainWindows()
+      .filter((win: any) => {
+        const pane = win.ZoteroPane;
+        return pane && (!("libraryViews" in pane) || pane.libraryView);
+      })
+      .map((win) => onMainWindowLoad(win)),
   );
 
   // Mark initialized as true to confirm plugin loading status
@@ -82,7 +106,7 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
     `${addon.data.config.addonRef}-mainWindow.ftl`,
   );
 
-  // Register this window's UI: toolbar button, Tools menu, context menu.
+  // Register this window's UI: toolbar buttons and item context menu.
   ui.registerWindowUI(win);
   // Attach the status dot to this window's item tree (prototype is shared, so
   // this is idempotent across windows).
@@ -90,9 +114,9 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
+  // Only this window's UI: with Zotero 11's multiple windows, others stay open
+  // (global registrations are undone in onShutdown).
   ui.unregisterWindowUI(win);
-  ztoolkit.unregisterAll();
-  addon.data.dialog?.window?.close();
 }
 
 function onShutdown(): void {
@@ -102,8 +126,13 @@ function onShutdown(): void {
     Zotero.Notifier.unregisterObserver(notifierID);
     notifierID = null;
   }
+  if (tabNotifierID) {
+    Zotero.Notifier.unregisterObserver(tabNotifierID);
+    tabNotifierID = null;
+  }
   ui.unregisterAllWindows();
   ui.unregisterSection();
+  ui.unregisterToolsMenu();
   ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
   // Remove addon object

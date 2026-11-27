@@ -2,16 +2,10 @@ startup-begin = reMarkable Sync is loading
 startup-finish = reMarkable Sync is ready
 
 menuitem-sync-now = reMarkable: Sync now
-tools-menu = reMarkable
-tools-sync-now = Sync now
 sync-more-tooltip = More sync options for this item
 sync-force-pull = Force pull (device → Zotero)
 sync-force-push = Force push (Zotero → device)
 force-push-done = Re-sent { $pushed } annotation(s) to device, skipped { $skipped }
-tools-push = Push annotations to device
-tools-force-pull = Force re-pull annotations
-tools-clear-pulled = Remove pulled annotations
-tools-cleanup = Clean up device folder…
 menuitem-add-to-sync = reMarkable: Add to sync
 menuitem-remove-from-sync = reMarkable: Remove from sync
 menuitem-overwrite-from-zotero = reMarkable: Overwrite device from Zotero

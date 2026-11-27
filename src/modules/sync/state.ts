@@ -129,7 +129,12 @@ const unescapeHtml = (s: string) =>
 
 function streams(): { C?: any; D?: any } {
   const g = globalThis as any;
-  const win = g.Zotero?.getMainWindow?.();
+  // Node (tests) has the streams natively; in Zotero, take them from an open
+  // main window (resolved now: a cached one may have closed).
+  const win =
+    g.CompressionStream && g.DecompressionStream
+      ? undefined
+      : (g.Zotero?.getMainWindows?.() ?? []).find((w: any) => !w.closed);
   return {
     C: g.CompressionStream ?? win?.CompressionStream,
     D: g.DecompressionStream ?? win?.DecompressionStream,
